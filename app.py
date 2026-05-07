@@ -1065,7 +1065,8 @@ with tab_quote:
 
     # ----- Inbox folder watcher — drop files in E:\NdlovuQS\inbox\ and click Process -----
     inbox_files = _list_inbox_files()
-    with st.container(border=True):
+    # Collapsed by default; expand if there are files waiting
+    with st.expander(f"📥 Inbox ({len(inbox_files)} file(s) ready)" if inbox_files else "📥 Inbox", expanded=bool(inbox_files)):
         cols_h = st.columns([3, 1])
         with cols_h[0]:
             st.subheader("📥 Inbox")
@@ -1822,8 +1823,10 @@ with tab_quote:
 
         # ----- Verbal edits (B-mode): speak instructions, AI applies them -----
         if _stt is not None and parse_voice_instruction is not None and ss.frozen_quote is None:
-            with st.container(border=True):
-                st.markdown("**🎙 Verbal edit before issue** — say something like *'drop carpenter rate by 10%, add a labourer day, change RE to mention weekend'*")
+            # Collapsed by default — expand if there are pending edits to confirm
+            voice_default_open = bool(ss.get("voice_edit_pending"))
+            with st.expander("🎙 Verbal edit before issue", expanded=voice_default_open):
+                st.caption("Say something like *'drop carpenter rate by 10%, add a labourer day, change RE to mention weekend'*. AI parses → diff preview → confirm before applying.")
                 vcols = st.columns([1, 4])
                 with vcols[0]:
                     spoken = _stt(
@@ -2355,18 +2358,39 @@ with tab_admin:
 
     # ---------------- Catalog (learned items from past quotes) ----------------
     with sub_catalog:
-        # Backfill banner
+        # Backfill + Backup banner
         with st.container(border=True):
-            bcols = st.columns([3, 1])
+            bcols = st.columns([2, 1, 1])
             with bcols[0]:
                 st.markdown("**Backfill from past quotes**")
-                st.caption("If items from old quotes (manual or AI-generated) aren't showing below, run this to sweep every line item from `issued_quote_items` into the catalog.")
+                st.caption("Sweep every line item from `issued_quote_items` into the catalog (catches items missed before the learning hook was wired).")
             with bcols[1]:
                 if st.button("🔄 Backfill catalog", use_container_width=True, type="primary"):
                     n = memory.backfill_learned_items_from_quotes()
                     log("backfill_catalog", details={"items_processed": n})
                     st.toast(f"Backfilled {n} item(s) from past quotes", icon="✅")
                     st.rerun()
+            with bcols[2]:
+                # DB backup — copy memory.sqlite into the work folder with a timestamp
+                if st.button("💾 Backup DB", use_container_width=True,
+                             help="Copies the SQLite database to {work_folder}/backups/ with a timestamp"):
+                    try:
+                        import shutil
+                        from datetime import datetime as _dt
+                        src = Path(__file__).parent / "data" / "memory.sqlite"
+                        if not src.exists():
+                            st.warning("No database file to back up yet.")
+                        else:
+                            wf = (ss.get("work_folder") or "").strip() or str(Path(__file__).parent / "data")
+                            target_dir = Path(wf) / "backups"
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
+                            dst = target_dir / f"memory-{stamp}.sqlite"
+                            shutil.copy2(src, dst)
+                            st.success(f"Backed up to {dst}")
+                            log("db_backup", details={"path": str(dst), "size": dst.stat().st_size})
+                    except Exception as e:
+                        st.error(f"Backup failed: {e}")
 
         try:
             cat_items = memory.list_learned_items() or []
