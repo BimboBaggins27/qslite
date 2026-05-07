@@ -1,0 +1,42 @@
+# Secrets — never commit
+.env
+.streamlit/secrets.toml
+
+# Local databases / persistent data (regenerated)
+data/memory.sqlite
+data/memory.sqlite-journal
+data/memory.sqlite-wal
+data/memory.sqlite-shm
+data/.work_folder
+data/test-*.xlsx
+data/test-*.pdf
+data/sample-*.png
+data/mobile-qr.png
+data/site-survey-template.xlsx
+
+# Generated quotes
+data/workshop17-firestation-quote.*
+data/quote-*.pdf
+data/quote-*.xlsx
+
+# Big binary tooling — not for the repo
+bin/cloudflared.exe
+bin/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.env.local
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Streamlit cache
+.streamlit/cache/

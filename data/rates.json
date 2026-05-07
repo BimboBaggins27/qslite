@@ -1,0 +1,63 @@
+[
+  { "code": "DRY-001", "description": "Supply and fit solid full height drywall, 12.5mm std board both sides, no cavity batt, with black aluminium skirting", "trade": "drywall", "unit": "m", "rate_zar": 900.00, "valid_from": "2026-05-01", "source": "sa-drywallking.co.za R750-R1,050/lin.m midpoint" },
+  { "code": "DRY-002", "description": "Extra over for wall abutments", "trade": "drywall", "unit": "no", "rate_zar": 275.00, "valid_from": "2026-05-01", "source": "industry-typical, ATESS Apr-2025 reference" },
+  { "code": "DRY-003", "description": "Extra over for 90 degree corner", "trade": "drywall", "unit": "no", "rate_zar": 165.00, "valid_from": "2026-05-01", "source": "industry-typical, ATESS Apr-2025 reference" },
+  { "code": "DRY-004", "description": "Form opening in new dry wall for sliding window, black aluminium", "trade": "drywall", "unit": "no", "rate_zar": 3800.00, "valid_from": "2026-05-01", "source": "industry-typical, ATESS Apr-2025 reference" },
+  { "code": "DRY-005", "description": "Drywall with 50mm cavity batt insulation, 12.5mm std board both sides", "trade": "drywall", "unit": "m", "rate_zar": 1050.00, "valid_from": "2026-05-01", "source": "sa-drywallking.co.za R950-R1,200/lin.m midpoint" },
+  { "code": "DRY-006", "description": "Drywall fire-rated 30 min, 15mm gypsum board both sides", "trade": "drywall", "unit": "m", "rate_zar": 1200.00, "valid_from": "2026-05-01", "source": "sa-drywallking.co.za R500-R750/m² fire-rated × 1.9m height" },
+
+  { "code": "DOR-001", "description": "Supply and fit 2032 x 1511mm semi-solid masonite door pair complete with black aluminium door frame, lock set, R 980 ironmongery allowance", "trade": "carpentry", "unit": "each", "rate_zar": 3500.00, "valid_from": "2026-05-01", "source": "industry-typical, ATESS Apr-2025 reference" },
+  { "code": "DOR-002", "description": "Hollow-core internal door, supply and hang with frame and ironmongery", "trade": "carpentry", "unit": "each", "rate_zar": 2000.00, "valid_from": "2026-05-01", "source": "thehandymanjohannesburg.co.za R1,200-R3,000 midpoint" },
+  { "code": "DOR-003", "description": "Solid timber door, hardwood, supply and hang with frame and ironmongery", "trade": "carpentry", "unit": "each", "rate_zar": 5500.00, "valid_from": "2026-05-01", "source": "id.org.za R3,500-R7,500 midpoint" },
+  { "code": "DOR-004", "description": "External steel security gate door, supply and install", "trade": "carpentry", "unit": "each", "rate_zar": 4500.00, "valid_from": "2026-05-01", "source": "thehandymanjohannesburg.co.za R3,500-R7,000 exterior range" },
+
+  { "code": "TIL-001", "description": "Wall tiling, ceramic 300x600, supply and fix incl adhesive and grout", "trade": "tiling", "unit": "m2", "rate_zar": 450.00, "valid_from": "2026-05-01", "source": "tilercostperm2.co.za + servicelinksa.co.za, ceramic supply R80-R200 + labour R150-R350" },
+  { "code": "TIL-002", "description": "Floor tiling, porcelain 600x600, supply and fix incl adhesive and grout", "trade": "tiling", "unit": "m2", "rate_zar": 700.00, "valid_from": "2026-05-01", "source": "servicelinksa.co.za, porcelain supply R150-R400 + labour R200-R400" },
+  { "code": "TIL-003", "description": "Mosaic feature tile, supply and fix", "trade": "tiling", "unit": "m2", "rate_zar": 1200.00, "valid_from": "2026-05-01", "source": "servicelinksa.co.za premium tile range" },
+  { "code": "TIL-004", "description": "Tile skirting, supply and fix", "trade": "tiling", "unit": "lin.m", "rate_zar": 180.00, "valid_from": "2026-05-01", "source": "buildersingauteng.co.za skirting installation rate" },
+
+  { "code": "PNT-001", "description": "Sand down and paint new dry wall, 1 coat plaster primer and 2 coats white PVA", "trade": "painting", "unit": "m2", "rate_zar": 80.00, "valid_from": "2026-05-01", "source": "paintingpricepersquaremeter.co.za R50-R100/m² interior incl labour" },
+  { "code": "PNT-002", "description": "Ceiling paint, 2 coats acrylic", "trade": "painting", "unit": "m2", "rate_zar": 85.00, "valid_from": "2026-05-01", "source": "kandua.com interior painting average" },
+  { "code": "PNT-003", "description": "External wall paint, 2 coats weatherproof", "trade": "painting", "unit": "m2", "rate_zar": 150.00, "valid_from": "2026-05-01", "source": "thirtyone.co.za exterior painting R100-R200/m² range" },
+  { "code": "PNT-004", "description": "Sand down and paint new door, 1 coat primer and 2 coats enamel", "trade": "painting", "unit": "m2", "rate_zar": 125.00, "valid_from": "2026-05-01", "source": "interiorpaintingprice.co.za enamel-on-trim rate" },
+  { "code": "PNT-005", "description": "Repaint existing wall, 1 coat undercoat and 2 coats PVA", "trade": "painting", "unit": "m2", "rate_zar": 75.00, "valid_from": "2026-05-01", "source": "paintingpricepersquaremeter.co.za repaint rate (less prep)" },
+  { "code": "PNT-006", "description": "Steelwork paint, 2 coats enamel", "trade": "painting", "unit": "m2", "rate_zar": 140.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+
+  { "code": "PLM-001", "description": "Toilet suite, supply and install standard close-coupled", "trade": "plumbing", "unit": "each", "rate_zar": 3500.00, "valid_from": "2026-05-01", "source": "localpros.co.za R1,650-R4,950 quality close-coupled midpoint" },
+  { "code": "PLM-002", "description": "Basin with mixer tap, supply and install", "trade": "plumbing", "unit": "each", "rate_zar": 2500.00, "valid_from": "2026-05-01", "source": "plumberlimpopo.co.za R1,500-R3,000 install + basic mixer" },
+  { "code": "PLM-003", "description": "Shower mixer and head, supply and install", "trade": "plumbing", "unit": "each", "rate_zar": 4500.00, "valid_from": "2026-05-01", "source": "thehandymanjohannesburg.co.za R3,000-R6,000 midpoint" },
+  { "code": "PLM-004", "description": "Bath, freestanding acrylic, supply and install", "trade": "plumbing", "unit": "each", "rate_zar": 12000.00, "valid_from": "2026-05-01", "source": "thehandymanjohannesburg.co.za R8,000-R30,000 standard end" },
+  { "code": "PLM-005", "description": "Kitchen sink double-bowl with mixer, supply and install", "trade": "plumbing", "unit": "each", "rate_zar": 4500.00, "valid_from": "2026-05-01", "source": "plumberlimpopo.co.za R3,000-R6,000 midpoint" },
+  { "code": "PLM-006", "description": "Geyser 150L electric, supply and install with isolator and tray", "trade": "plumbing", "unit": "each", "rate_zar": 8500.00, "valid_from": "2026-05-01", "source": "homeplus.africa geyser install incl components R7-10k" },
+
+  { "code": "ELC-001", "description": "Standard 16A double power point, supply and install", "trade": "electrical", "unit": "each", "rate_zar": 550.00, "valid_from": "2026-05-01", "source": "thehandymanjohannesburg.co.za R300-R500 install + materials" },
+  { "code": "ELC-002", "description": "Light switch, single gang, supply and install", "trade": "electrical", "unit": "each", "rate_zar": 300.00, "valid_from": "2026-05-01", "source": "kandua.com switch & socket installation midpoint" },
+  { "code": "ELC-003", "description": "Downlight, LED, supply and install", "trade": "electrical", "unit": "each", "rate_zar": 600.00, "valid_from": "2026-05-01", "source": "localpros.co.za R330-R1,650 standard downlight" },
+  { "code": "ELC-004", "description": "Pendant light fitting, supply and install", "trade": "electrical", "unit": "each", "rate_zar": 700.00, "valid_from": "2026-05-01", "source": "homeplus.africa pendant fitting + install" },
+  { "code": "ELC-005", "description": "Distribution board, 12-way, supply and install", "trade": "electrical", "unit": "each", "rate_zar": 4000.00, "valid_from": "2026-05-01", "source": "id.org.za electrical-installation 12-way DB" },
+
+  { "code": "CAR-001", "description": "Skirting board, 75mm MDF, supply and fix", "trade": "carpentry", "unit": "lin.m", "rate_zar": 110.00, "valid_from": "2026-05-01", "source": "buildersingauteng.co.za R45-R85 + materials, MDF tier" },
+  { "code": "CAR-002", "description": "Built-in cupboard, melamine, supply and install", "trade": "carpentry", "unit": "lin.m", "rate_zar": 4500.00, "valid_from": "2026-05-01", "source": "cupboarddoctor.co.za R4,000-R6,000 melamine basic" },
+  { "code": "CAR-003", "description": "Kitchen base unit with stone top, supply and install", "trade": "carpentry", "unit": "lin.m", "rate_zar": 8000.00, "valid_from": "2026-05-01", "source": "cupboarddoctor.co.za R5,000-R12,000 mid-range kitchen" },
+  { "code": "CAR-004", "description": "Supply and fit Formica top by sliding window", "trade": "carpentry", "unit": "m", "rate_zar": 589.00, "valid_from": "2026-05-01", "source": "industry-typical, ATESS Apr-2025 reference" },
+  { "code": "CAR-005", "description": "Extra over for 720mm 75mm black legs", "trade": "carpentry", "unit": "no", "rate_zar": 225.00, "valid_from": "2026-05-01", "source": "industry-typical, ATESS Apr-2025 reference" },
+
+  { "code": "MAS-001", "description": "Brick wall, plastered both sides, single skin", "trade": "masonry", "unit": "m2", "rate_zar": 1200.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+  { "code": "MAS-002", "description": "Plaster repair to existing wall", "trade": "masonry", "unit": "m2", "rate_zar": 320.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+
+  { "code": "GLZ-001", "description": "Aluminium window, sliding, supply and install", "trade": "glazing", "unit": "m2", "rate_zar": 3200.00, "valid_from": "2026-05-01", "source": "ptawindows.co.za aluminium R350-R800/m² + frame supply" },
+  { "code": "GLZ-002", "description": "Frameless shower screen, supply and install", "trade": "glazing", "unit": "m2", "rate_zar": 2500.00, "valid_from": "2026-05-01", "source": "ptawindows.co.za frameless screen R6,000+ avg unit ÷ 2.4 m²" },
+
+  { "code": "FIN-001", "description": "Vinyl flooring, supply and install", "trade": "finishes", "unit": "m2", "rate_zar": 385.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+  { "code": "FIN-002", "description": "Laminate flooring, supply and install", "trade": "finishes", "unit": "m2", "rate_zar": 525.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+  { "code": "FIN-003", "description": "Suspended ceiling 600x600, supply and install", "trade": "finishes", "unit": "m2", "rate_zar": 550.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+
+  { "code": "DEM-001", "description": "Strip-out finishes including disposal", "trade": "demolition", "unit": "m2", "rate_zar": 285.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+  { "code": "DEM-002", "description": "Remove existing fixture, dispose", "trade": "demolition", "unit": "each", "rate_zar": 450.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+
+  { "code": "PG-001", "description": "Builders profit on supply items (typically 10%)", "trade": "pgs", "unit": "no", "rate_zar": 0.00, "valid_from": "2026-05-01", "source": "calculation placeholder, no markup applied" },
+  { "code": "PG-002", "description": "Rubble removal per load (1 ton)", "trade": "pgs", "unit": "no", "rate_zar": 800.00, "valid_from": "2026-05-01", "source": "capecorerubble.co.za + bafanaremovals.co.za 2026 typical" },
+  { "code": "PG-003", "description": "Travel per trip", "trade": "pgs", "unit": "no", "rate_zar": 350.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+  { "code": "PG-004", "description": "Site supervisor, daily rate", "trade": "pgs", "unit": "no", "rate_zar": 1800.00, "valid_from": "2026-05-01", "source": "industry-typical (no direct online rate)" },
+  { "code": "PG-005", "description": "Skip hire, 6m³, 2 days", "trade": "pgs", "unit": "no", "rate_zar": 2250.00, "valid_from": "2026-05-01", "source": "rubblepta.co.za + capecorerubble.co.za R2,000-R2,500" }
+]
