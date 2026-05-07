@@ -90,6 +90,45 @@ def _embed_ios_pwa_meta() -> None:
 
 _embed_ios_pwa_meta()
 
+
+# ---------- Password gate ----------
+def _site_password_gate() -> None:
+    """If SITE_PASSWORD is set (env var or Streamlit secret), require it before rendering anything."""
+    expected = os.environ.get("SITE_PASSWORD", "").strip()
+    if not expected:
+        try:
+            secret_val = st.secrets.get("SITE_PASSWORD", "")
+            expected = str(secret_val).strip() if secret_val else ""
+        except Exception:
+            expected = ""
+    if not expected:
+        return  # no password configured → no gate
+    if st.session_state.get("_site_authed"):
+        return
+    st.markdown(
+        """
+        <div style="max-width:420px; margin:8vh auto 0; text-align:center;">
+          <h1 style="color:#0A2540; font-weight:700; letter-spacing:-0.02em;">🔒 QS Live</h1>
+          <p style="color:#5C6B73;">This app is password-protected.<br/>Enter the site password to continue.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    cols = st.columns([1, 2, 1])
+    with cols[1]:
+        pw = st.text_input("Site password", type="password", key="_site_pw_input",
+                            label_visibility="collapsed", placeholder="Site password")
+        if st.button("🔓 Unlock", type="primary", use_container_width=True):
+            if pw.strip() == expected:
+                st.session_state["_site_authed"] = True
+                st.rerun()
+            else:
+                st.error("Wrong password.")
+    st.stop()
+
+
+_site_password_gate()
+
 # ---------- visual polish ----------
 LOGO_PATH = Path(__file__).parent / "assets" / "logo.png"
 LOGO_PATH.parent.mkdir(parents=True, exist_ok=True)
