@@ -62,7 +62,7 @@ st.set_page_config(
     page_title="QS Live — Quotation Studio",
     page_icon="📐",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",  # tap the » arrow to open when you need API key / Undo / zone locks
 )
 
 # ---------- iOS PWA install support (Path A: home-screen install via Safari) ----------
