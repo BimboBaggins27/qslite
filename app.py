@@ -51,6 +51,13 @@ try:
 except Exception:
     paste_image_button = None
 
+# Lucide icons — inline SVG (replaces emoji where Streamlit allows raw HTML)
+try:
+    from lucide_icons import icon as ic, icon_label as il
+except Exception:
+    def ic(name: str, size: int = 18, color: str = "currentColor") -> str: return ""
+    def il(name: str, label: str, size: int = 18, color: str = "currentColor") -> str: return label
+
 try:
     from voice_edits import parse_voice_instruction, apply_edits as _apply_voice_edits
 except Exception:
@@ -715,30 +722,23 @@ if DEMO_MODE:
 # Hero header with brand mark
 hero_left, hero_right = st.columns([3, 2])
 with hero_left:
+    hero_icon_html = ic("ruler", size=28, color="#FFFFFF")
+    hero_html = f"""
+        <div class="qs-hero">
+          <h1 style="display:flex; align-items:center; gap:10px; margin:0;">
+            {hero_icon_html}<span>QS Live · Quotation Studio</span>
+          </h1>
+          <p>Drop drawings, photos or PDFs in. The AI builds your quotation. You polish, label, and issue.</p>
+        </div>
+        """
     if LOGO_PATH.exists():
         col_logo, col_title = st.columns([1, 4])
         with col_logo:
             st.image(str(LOGO_PATH), width=88)
         with col_title:
-            st.markdown(
-                """
-                <div class="qs-hero">
-                  <h1>QS Live · Quotation Studio</h1>
-                  <p>Drop drawings, photos or PDFs in. The AI builds your quotation. You polish, label, and issue.</p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+            st.markdown(hero_html, unsafe_allow_html=True)
     else:
-        st.markdown(
-            """
-            <div class="qs-hero">
-              <h1>QS Live · Quotation Studio</h1>
-              <p>Drop drawings, photos or PDFs in. The AI builds your quotation. You polish, label, and issue.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.markdown(hero_html, unsafe_allow_html=True)
 
 with hero_right:
     metrics_a, metrics_b, metrics_c = st.columns(3)
@@ -825,8 +825,8 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Job")
-    if st.button("🆕 New job (reset client + scope)", use_container_width=True,
-                 help="Clears client name, quote no., RE: subject, line items, and pending review. Keeps your company info, banking, payment terms, and learner memory."):
+    if st.button("New job", icon=":material/restart_alt:", use_container_width=True,
+                 help="Clears client, quote no., RE: subject, line items, and pending review. Keeps your company info, banking, payment terms, and learner memory."):
         # Reset per-job header fields
         h = ss.quote_header
         for f in QuoteHeader.per_job_fields():
@@ -893,7 +893,13 @@ with st.sidebar:
 st.markdown(_system_health_strip(), unsafe_allow_html=True)
 
 tab_quote, tab_past, tab_admin, tab_rates, tab_audit = st.tabs(
-    ["📐 Quote builder", "📁 Past quotes", "📇 Clients & Projects", "💰 Rate review queue", "📜 Audit log"]
+    [
+        ":material/architecture: Quote builder",
+        ":material/folder: Past quotes",
+        ":material/contacts: Clients & Projects",
+        ":material/payments: Rate review queue",
+        ":material/receipt_long: Audit log",
+    ]
 )
 
 # ============================================================================
@@ -932,7 +938,8 @@ with tab_quote:
     )
 
     # ----- Quote header (editable cover-page fields) -----
-    with st.expander("📝 Quote header (editable — company, client, quote no, terms)", expanded=False):
+    with st.expander("Quote header (editable — company, client, quote no, terms)",
+                       expanded=False, icon=":material/edit_note:"):
         h = ss.quote_header
 
         # ===== REQUIRED: Client + Project, dropdown + inline-add =====
@@ -1107,7 +1114,8 @@ with tab_quote:
     # ----- Inbox folder watcher — drop files in E:\NdlovuQS\inbox\ and click Process -----
     inbox_files = _list_inbox_files()
     # Collapsed by default; expand if there are files waiting
-    with st.expander(f"📥 Inbox ({len(inbox_files)} file(s) ready)" if inbox_files else "📥 Inbox", expanded=bool(inbox_files)):
+    inbox_label = f"Inbox ({len(inbox_files)} file(s) ready)" if inbox_files else "Inbox"
+    with st.expander(inbox_label, expanded=bool(inbox_files), icon=":material/inbox:"):
         cols_h = st.columns([3, 1])
         with cols_h[0]:
             st.subheader("📥 Inbox")
@@ -1135,7 +1143,7 @@ with tab_quote:
             cols_b = st.columns([1, 1, 2])
             move_after = cols_b[0].checkbox("Move processed → `inbox/processed/`", value=True, key="inbox-move")
             run_inbox = cols_b[1].button(
-                "🚀 Process inbox", type="primary", use_container_width=True,
+                "Process inbox", icon=":material/rocket_launch:", type="primary", use_container_width=True,
                 disabled=ss.frozen_quote is not None,
             )
             if run_inbox:
@@ -1185,7 +1193,8 @@ with tab_quote:
                     _run_unified_extraction()
 
     # ----- Site Survey (foreman template upload) -----
-    with st.expander("📋 Site Survey — download blank template / import filled-in survey", expanded=False):
+    with st.expander("Site Survey — download blank template / import filled-in survey",
+                       expanded=False, icon=":material/clipboard:"):
         col_dl, col_info = st.columns([1, 3])
         with col_dl:
             st.download_button(
@@ -1368,7 +1377,7 @@ with tab_quote:
                 st.toast(f"Pasted image queued: {pasted_name}", icon="📋")
                 st.rerun()
         run = st.button(
-            "Run", type="primary",
+            "Run extraction", icon=":material/play_arrow:", type="primary",
             disabled=not uploads or ss.frozen_quote is not None,
             use_container_width=True,
         )
@@ -1696,7 +1705,7 @@ with tab_quote:
             st.rerun()
 
         # ----- Manual add -----
-        with st.expander("➕ Add manual line item"):
+        with st.expander("Add manual line item", icon=":material/add:"):
             # Learned items from past quotes (sub-categorized by trade) — defensive fetch
             try:
                 learned = memory.list_learned_items() or []
@@ -1871,7 +1880,7 @@ with tab_quote:
         if _stt is not None and parse_voice_instruction is not None and ss.frozen_quote is None:
             # Collapsed by default — expand if there are pending edits to confirm
             voice_default_open = bool(ss.get("voice_edit_pending"))
-            with st.expander("🎙 Verbal edit before issue", expanded=voice_default_open):
+            with st.expander("Verbal edit before issue", expanded=voice_default_open, icon=":material/mic:"):
                 st.caption("Say something like *'drop carpenter rate by 10%, add a labourer day, change RE to mention weekend'*. AI parses → diff preview → confirm before applying.")
                 vcols = st.columns([1, 4])
                 with vcols[0]:
@@ -2024,10 +2033,12 @@ with tab_quote:
                     if missing_project: bits.append("**Project**")
                     st.error(f"❗ Required: {' and '.join(bits)} must be selected (or added) in the Quote header before issuing.")
 
-                issue_btn = st.button("📄 Issue Quote (strict, reviewed)", type="primary",
+                issue_btn = st.button("Issue Quote (strict, reviewed)",
+                                      icon=":material/check_circle:", type="primary",
                                       disabled=(not ok) or hard_block)
                 quick_btn = st.button(
-                    "🚀 Quick Excel (skip review)",
+                    "Quick Excel (skip review)",
+                    icon=":material/bolt:",
                     help="Bypass per-item review and immediately generate the Excel/PDF from whatever AI extracted. Use when you plan to edit the Excel yourself.",
                     disabled=(not ss.line_items) or hard_block,
                     use_container_width=True,
