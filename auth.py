@@ -32,7 +32,7 @@ import streamlit as st
 _AUDIT_LOG = Path(__file__).parent / "data" / "auth_audit.log"
 _LOCKOUT_WINDOW_S = 15 * 60   # 15 minutes
 _MAX_ATTEMPTS = 5
-_MIN_PASSWORD_LEN = 12
+_RECOMMENDED_PASSWORD_LEN = 12  # warn (don't block) below this
 
 
 def _read_secret(name: str) -> str:
@@ -119,14 +119,19 @@ def site_password_gate() -> None:
     if not expected:
         return  # no gate configured
 
-    # 3. Reject weak passwords proactively
-    if len(expected) < _MIN_PASSWORD_LEN:
-        st.error(
-            f"⚠ **SITE_PASSWORD is too short** ({len(expected)} chars; need ≥{_MIN_PASSWORD_LEN}).\n\n"
-            f"Generate a strong one and paste into your `.env`:\n\n"
-            f"```\nSITE_PASSWORD={_generate_strong_password()}\n```"
+    # 3. Warn about weak passwords (do not block — operator's choice)
+    if (
+        len(expected) < _RECOMMENDED_PASSWORD_LEN
+        and not st.session_state.get("_site_authed")
+        and not st.session_state.get("_site_password_warned")
+    ):
+        st.warning(
+            f"⚠ Site password is short ({len(expected)} chars). "
+            f"Recommended ≥{_RECOMMENDED_PASSWORD_LEN}. "
+            f"Rate-limit + lockout still active, audit log still recording. "
+            f"Run `python -c \"import secrets; print(secrets.token_urlsafe(16))\"` if you want a stronger one."
         )
-        st.stop()
+        st.session_state["_site_password_warned"] = True
 
     if st.session_state.get("_site_authed"):
         return
