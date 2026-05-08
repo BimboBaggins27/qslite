@@ -6,16 +6,11 @@ previews as a diff and applies on confirm.
 """
 from __future__ import annotations
 
-import os
 import uuid
 from typing import Optional
 
-import anthropic
-
+import providers
 from schema import LineItem, Provenance, EditState
-
-
-MODEL = "claude-haiku-4-5-20251001"  # Haiku is plenty for parsing instructions
 
 
 EDIT_TOOL = {
@@ -98,9 +93,9 @@ def parse_voice_instruction(
     items: list[LineItem],
     header: dict,
 ) -> Optional[dict]:
-    """Send the verbal instruction to Claude with current quote state. Returns
+    """Send the verbal instruction to the active LLM with current quote state. Returns
     {edits: [...], summary: str} or None on failure."""
-    if not transcript.strip() or not os.environ.get("ANTHROPIC_API_KEY"):
+    if not transcript.strip() or not providers.has_provider_key():
         return None
 
     system = (
@@ -127,23 +122,21 @@ def parse_voice_instruction(
         f"Translate the instruction into apply_quote_edits."
     )
 
-    client = anthropic.Anthropic()
     try:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=2048,
+        result = providers.call_with_tools(
+            messages=[{"role": "user", "content": user_msg}],
             system=system,
             tools=[EDIT_TOOL],
             tool_choice={"type": "tool", "name": "apply_quote_edits"},
-            messages=[{"role": "user", "content": user_msg}],
+            kind="text",
+            max_tokens=2048,
         )
     except Exception:
         return None
 
-    tool_use = next((b for b in response.content if b.type == "tool_use"), None)
-    if tool_use is None:
+    if result.name != "apply_quote_edits":
         return None
-    return tool_use.input
+    return result.input
 
 
 def apply_edits(

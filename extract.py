@@ -7,11 +7,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-import anthropic
-
+import providers
 from schema import ClarificationRequest, ExtractedItem, ExtractionResult, Provenance
-
-MODEL = "claude-sonnet-4-5"
 
 def _catalogue_summary() -> str:
     """One-line summary per catalogue rate, fed to the model so it can pick or propose rates accurately."""
@@ -222,8 +219,6 @@ def extract_elements(
     extra_context: Optional[str] = None,
 ) -> ExtractionResult:
     """Run the vision LLM and return structured ExtractionResult."""
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
     user_text = (
         f"Image filename: {image_filename}\n"
         "Identify every priceable element you see and return it via the tool. "
@@ -232,31 +227,25 @@ def extract_elements(
     if extra_context:
         user_text += f"\n\nUser-supplied context:\n{extra_context}"
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=8192,
+    result = providers.call_with_tools(
+        messages=[{
+            "role": "user",
+            "content": [
+                _image_to_block(image_bytes, media_type),
+                {"type": "text", "text": user_text},
+            ],
+        }],
         system=_prompt_with_catalogue(SYSTEM_PROMPT_BASE),
         tools=[EXTRACTION_TOOL],
         tool_choice={"type": "tool", "name": "record_extracted_elements"},
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    _image_to_block(image_bytes, media_type),
-                    {"type": "text", "text": user_text},
-                ],
-            }
-        ],
+        kind="vision",
+        max_tokens=8192,
     )
 
-    tool_use = next(
-        (b for b in response.content if b.type == "tool_use"),
-        None,
-    )
-    if tool_use is None:
-        raise RuntimeError("Model did not return a tool_use block")
+    if result.name != "record_extracted_elements":
+        raise RuntimeError(f"Model did not return the extraction tool (got {result.name})")
 
-    raw = tool_use.input
+    raw = result.input
     items = []
     for it in raw.get("items", []):
         prov = it["provenance"]
@@ -355,8 +344,6 @@ def extract_unified(
     """One-channel extractor. Inputs is a list of (bytes, media_type, filename).
     PDFs are auto-rendered to first-page PNGs; multi-page PDFs are flattened to one
     representative page each. Returns either an ExtractionResult or a ClarificationRequest."""
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
     content_blocks: list[dict] = []
     file_summary_lines: list[str] = []
     for raw_bytes, media, fname in inputs:
@@ -385,31 +372,31 @@ def extract_unified(
     )
     content_blocks.append({"type": "text", "text": user_text})
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=16384,
+    result = providers.call_with_tools(
+        messages=[{"role": "user", "content": content_blocks}],
         system=_prompt_with_catalogue(UNIFIED_SYSTEM_PROMPT),
         tools=[EXTRACTION_TOOL, ASK_CLARIFICATION_TOOL],
-        messages=[{"role": "user", "content": content_blocks}],
+        tool_choice=None,
+        kind="vision",
+        max_tokens=16384,
     )
 
-    tool_use = next((b for b in response.content if b.type == "tool_use"), None)
-    if tool_use is None:
-        return ClarificationRequest(
-            question="I couldn't decide what to do with the input. What would you like me to extract?",
-            options=["Just list everything visible", "Compare two drawings", "Try again with more context"],
-        )
-
-    if tool_use.name == "ask_clarification":
-        raw = tool_use.input
+    if result.name == "ask_clarification":
+        raw = result.input
         return ClarificationRequest(
             question=str(raw.get("question") or "What would you like me to do?"),
             options=list(raw.get("options") or []),
             context_so_far=str(raw.get("context_so_far") or ""),
         )
 
+    if result.name != "record_extracted_elements":
+        return ClarificationRequest(
+            question="I couldn't decide what to do with the input. What would you like me to extract?",
+            options=["Just list everything visible", "Compare two drawings", "Try again with more context"],
+        )
+
     # extraction path
-    raw = tool_use.input
+    raw = result.input
     items = []
     for it in raw.get("items", []):
         prov = it.get("provenance") or {}
@@ -491,8 +478,6 @@ def extract_diff_from_drawings(
 ) -> ExtractionResult:
     """Compare an EXISTING drawing/photo to a PROPOSED one and return the BOQ delta as line items
     with [REMOVE]/[NEW]/[MODIFY] prefixes."""
-    client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
-
     user_text = (
         f"EXISTING drawing filename: {existing_filename}\n"
         f"PROPOSED drawing filename: {proposed_filename}\n"
@@ -503,29 +488,25 @@ def extract_diff_from_drawings(
     if extra_context:
         user_text += f"\n\nUser-supplied context:\n{extra_context}"
 
-    response = client.messages.create(
-        model=MODEL,
-        max_tokens=16384,
+    result = providers.call_with_tools(
+        messages=[{
+            "role": "user",
+            "content": [
+                _image_to_block(existing_bytes, existing_media),
+                _image_to_block(proposed_bytes, proposed_media),
+                {"type": "text", "text": user_text},
+            ],
+        }],
         system=_prompt_with_catalogue(DIFF_SYSTEM_PROMPT),
         tools=[EXTRACTION_TOOL],
         tool_choice={"type": "tool", "name": "record_extracted_elements"},
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    _image_to_block(existing_bytes, existing_media),
-                    _image_to_block(proposed_bytes, proposed_media),
-                    {"type": "text", "text": user_text},
-                ],
-            }
-        ],
+        kind="vision",
+        max_tokens=16384,
     )
+    if result.name != "record_extracted_elements":
+        raise RuntimeError(f"Model did not return the extraction tool (got {result.name})")
 
-    tool_use = next((b for b in response.content if b.type == "tool_use"), None)
-    if tool_use is None:
-        raise RuntimeError("Model did not return a tool_use block")
-
-    raw = tool_use.input
+    raw = result.input
     items = []
     for it in raw.get("items", []):
         prov = it["provenance"]

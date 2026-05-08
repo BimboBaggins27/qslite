@@ -17,6 +17,7 @@ import demo_extractor
 import key_manager
 import learner
 import memory
+import providers
 import rate_review
 import validators
 import versioning
@@ -518,7 +519,7 @@ def _system_health_strip() -> str:
     """A single horizontal strip showing the system's running state."""
     cells = []
     # API key
-    if key_manager.has_api_key():
+    if providers.has_provider_key():
         cells.append(_strip_cell("API key", "set", _pill("LIVE", "green")))
     else:
         cells.append(_strip_cell("API key", "not set", _pill("DEMO", "amber")))
@@ -850,7 +851,7 @@ def _run_unified_extraction(extra_clarification: str | None = None):
     if extra_clarification:
         base_context = (base_context + "\n\n" if base_context else "") + f"User clarification: {extra_clarification}"
 
-    if not key_manager.has_api_key():
+    if not providers.has_provider_key():
         b, m, fn = inputs[0]
         is_pdf = m == "application/pdf" or fn.lower().endswith(".pdf")
         if is_pdf:
@@ -914,11 +915,13 @@ def _run_unified_extraction(extra_clarification: str | None = None):
 
 # ---------- header ----------
 
-DEMO_MODE = not key_manager.has_api_key()
+DEMO_MODE = not providers.has_provider_key()
 
 if DEMO_MODE:
+    _active = providers.active_provider()
+    _label = "Anthropic" if _active == "anthropic" else "xAI Grok"
     st.warning(
-        "🧪  **DEMO MODE** — no Anthropic API key set, so extractions return deterministic synthetic data marked `[DEMO]`. "
+        f"🧪  **DEMO MODE** — no {_label} API key set, so extractions return deterministic synthetic data marked `[DEMO]`. "
         "Every other feature works (review, edit, learner, locks, Excel export). Add a key in the sidebar to enable real vision extraction."
     )
 
@@ -964,55 +967,82 @@ with hero_right:
 # ---------- sidebar: undo + zone locks ----------
 
 with st.sidebar:
-    st.subheader("Anthropic API key")
-    if key_manager.has_api_key():
-        masked = key_manager.get_api_key()
-        st.success(f"✓ Key set ({masked[:10]}…{masked[-4:]}, {len(masked)} chars)")
-        if st.button("Change / clear key", icon=":material/key:", use_container_width=True):
+    st.subheader("LLM provider")
+    current_provider = providers.active_provider()
+    provider_choice = st.radio(
+        "Provider",
+        options=["anthropic", "grok"],
+        index=["anthropic", "grok"].index(current_provider),
+        format_func=lambda p: "Anthropic (Claude Sonnet 4.5)" if p == "anthropic" else "xAI (Grok)",
+        horizontal=False,
+        label_visibility="collapsed",
+        key="provider-radio",
+    )
+    if provider_choice != current_provider:
+        key_manager.save_provider_choice(provider_choice)
+        log("provider_changed", details={"from": current_provider, "to": provider_choice})
+        st.rerun()
+    current_provider = provider_choice
+
+    # Per-provider key block
+    if current_provider == "anthropic":
+        key_label = "Anthropic API key"
+        key_help = "Get one at console.anthropic.com → API keys. Starts with sk-ant-…"
+        key_prefix = "sk-ant-"
+    else:
+        key_label = "xAI (Grok) API key"
+        key_help = "Get one at console.x.ai → API keys. Starts with xai-…"
+        key_prefix = "xai-"
+
+    st.markdown(f"**{key_label}**")
+    if key_manager.has_api_key(current_provider):
+        masked = key_manager.get_api_key(current_provider)
+        st.success(f"✓ Key set ({masked[:8]}…{masked[-4:]}, {len(masked)} chars)")
+        if st.button("Change / clear key", icon=":material/key:", use_container_width=True, key=f"chg-{current_provider}"):
             ss.show_key_input = True
-            ss.key_input_seq += 1  # rotate widget key → fresh empty input
+            ss.key_input_seq += 1
             st.rerun()
     else:
-        st.info("Paste your key below. Saved to qs-app/.env so you only do this once.")
+        st.info(f"Paste your {current_provider} key below. Saved to qs-app/.env so you only do this once.")
         ss.show_key_input = True
 
     if ss.get("show_key_input"):
-        widget_key = f"key-input-{ss.key_input_seq}"
+        widget_key = f"key-input-{current_provider}-{ss.key_input_seq}"
         typed = st.text_input(
-            "API key — paste, verify, then click Save",
+            f"{key_label} — paste, verify, then click Save",
             key=widget_key,
             placeholder="",
-            help="Get one at console.anthropic.com → API keys. Starts with sk-ant-…",
+            help=key_help,
         )
         stripped = (typed or "").strip()
         if stripped:
-            preview = f"{stripped[:10]}…{stripped[-4:]}" if len(stripped) > 14 else stripped
-            if stripped.startswith("sk-ant-"):
+            preview = f"{stripped[:8]}…{stripped[-4:]}" if len(stripped) > 12 else stripped
+            if stripped.startswith(key_prefix):
                 st.caption(f"✓ Looks valid · {len(stripped)} chars · {preview}")
             else:
-                st.caption(f"⚠ Doesn't start with `sk-ant-` (got `{preview}`, {len(stripped)} chars). Save anyway?")
+                st.caption(f"⚠ Doesn't start with `{key_prefix}` (got `{preview}`, {len(stripped)} chars). Save anyway?")
         else:
             st.caption("👆 Paste your key into the field above.")
 
         col_save, col_clear = st.columns(2)
-        save_clicked = col_save.button("Save", icon=":material/save:", type="primary", use_container_width=True, key=f"save-{ss.key_input_seq}")
-        clear_clicked = col_clear.button("Clear stored key", icon=":material/close:", use_container_width=True, key=f"clear-{ss.key_input_seq}")
+        save_clicked = col_save.button("Save", icon=":material/save:", type="primary", use_container_width=True, key=f"save-{current_provider}-{ss.key_input_seq}")
+        clear_clicked = col_clear.button("Clear stored key", icon=":material/close:", use_container_width=True, key=f"clear-{current_provider}-{ss.key_input_seq}")
 
         if save_clicked:
             if not stripped:
                 st.error("The field is empty. Paste your key first, then click Save.")
             else:
-                key_manager.save_api_key(stripped)
+                key_manager.save_api_key(stripped, current_provider)
                 ss.show_key_input = False
                 ss.key_input_seq += 1
-                log("save_api_key", details={"length": len(stripped)})
-                st.toast("✓ API key saved", icon="✅")
+                log("save_api_key", details={"provider": current_provider, "length": len(stripped)})
+                st.toast(f"✓ {current_provider} key saved", icon="✅")
                 st.rerun()
         if clear_clicked:
-            key_manager.clear_api_key()
+            key_manager.clear_api_key(current_provider)
             ss.show_key_input = True
             ss.key_input_seq += 1
-            log("clear_api_key")
+            log("clear_api_key", details={"provider": current_provider})
             st.rerun()
 
     st.divider()
@@ -2128,7 +2158,7 @@ with tab_quote:
                         "you confirm before applying. Free — no extra API key needed beyond Claude."
                     )
                 if spoken:
-                    if not key_manager.has_api_key():
+                    if not providers.has_provider_key():
                         st.error("Anthropic key needed for voice-edit parsing — paste it in the sidebar.")
                     else:
                         with st.spinner("Parsing your instruction…"):
