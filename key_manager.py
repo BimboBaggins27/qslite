@@ -12,10 +12,10 @@ ENV_PATH = Path(__file__).parent / ".env"
 
 # Each tuple: (canonical env name, list of accepted aliases for reading from secrets)
 KNOWN_KEYS = {
-    "anthropic":  ("ANTHROPIC_API_KEY", []),
-    "grok":       ("XAI_API_KEY", ["GROK_API_KEY"]),
-    "groq":       ("GROQ_API_KEY", []),
-    "cloudflare": ("CF_API_TOKEN", []),
+    "anthropic": ("ANTHROPIC_API_KEY", []),
+    "grok":      ("XAI_API_KEY", ["GROK_API_KEY"]),
+    "groq":      ("GROQ_API_KEY", []),
+    "gemini":    ("GEMINI_API_KEY", ["GOOGLE_API_KEY"]),
 }
 
 
@@ -81,7 +81,7 @@ def clear_api_key(provider: str = "anthropic") -> None:
 def save_provider_choice(provider: str) -> None:
     """Persist EXTRACTION_PROVIDER selection in .env + process env."""
     provider = (provider or "anthropic").strip().lower()
-    if provider not in ("anthropic", "grok", "groq", "cloudflare", "ollama"):
+    if provider not in ("anthropic", "grok", "groq", "gemini", "ollama"):
         provider = "anthropic"
     os.environ["EXTRACTION_PROVIDER"] = provider
     line = f"EXTRACTION_PROVIDER={provider}"

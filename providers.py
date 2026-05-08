@@ -1,20 +1,20 @@
 """LLM provider abstraction.
 
 QSLite started Anthropic-only. This module routes the same calls to:
-Anthropic (Claude), xAI (Grok), Groq, Cloudflare Workers AI, or local
-Ollama — all via the same call surface.
+Anthropic (Claude), xAI (Grok), Groq, Google Gemini, or local Ollama —
+all via the same call surface.
 
 Five providers:
-  - "anthropic"  — Claude Sonnet/Haiku via native SDK (paid)
-  - "grok"       — xAI Grok via OpenAI SDK at api.x.ai/v1 (paid)
-  - "groq"       — Groq (cloud, OpenAI-compat) at api.groq.com — free tier,
-                   30 req/min, fast.
-  - "cloudflare" — Cloudflare Workers AI via OpenAI-compat endpoint at
-                   https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/ai/v1.
-                   Free tier: 10k neurons/day (~hundreds of vision calls).
-                   Needs CF_API_TOKEN + CF_ACCOUNT_ID.
-  - "ollama"     — LOCAL Ollama at http://localhost:11434/v1, OpenAI-compat.
-                   Zero cost, runs on the host machine.
+  - "anthropic" — Claude Sonnet/Haiku via native SDK (paid)
+  - "grok"      — xAI Grok via OpenAI SDK at api.x.ai/v1 (paid)
+  - "groq"      — Groq (cloud, OpenAI-compat) at api.groq.com — free tier,
+                  30 req/min, fast.
+  - "gemini"    — Google Gemini via OpenAI-compat endpoint at
+                  generativelanguage.googleapis.com/v1beta/openai/.
+                  Free tier ~1500 req/day, vision-capable, generally the
+                  highest-quality free option.
+  - "ollama"    — LOCAL Ollama at http://localhost:11434/v1, OpenAI-compat.
+                  Zero cost, runs on the host machine.
 
 Provider is chosen by `EXTRACTION_PROVIDER` env var (or st.secrets) at call
 time. Models are overridable via:
@@ -24,8 +24,8 @@ time. Models are overridable via:
   - GROK_TEXT_MODEL         (default: grok-3-mini)
   - GROQ_VISION_MODEL       (default: llama-3.2-90b-vision-preview)
   - GROQ_TEXT_MODEL         (default: llama-3.3-70b-versatile)
-  - CF_VISION_MODEL         (default: @cf/meta/llama-3.2-11b-vision-instruct)
-  - CF_TEXT_MODEL           (default: @cf/meta/llama-3.3-70b-instruct-fp8-fast)
+  - GEMINI_VISION_MODEL     (default: gemini-2.5-flash)
+  - GEMINI_TEXT_MODEL       (default: gemini-2.5-flash)
   - OLLAMA_VISION_MODEL     (default: llama3.2-vision:11b)
   - OLLAMA_TEXT_MODEL       (default: llama3.2:3b)
   - OLLAMA_URL              (default: http://localhost:11434/v1)
@@ -66,14 +66,14 @@ def _read_env_or_secret(*keys: str) -> Optional[str]:
 
 
 def active_provider() -> str:
-    """Return 'anthropic' | 'grok' | 'groq' | 'cloudflare' | 'ollama'. Defaults 'anthropic'."""
+    """Return 'anthropic' | 'grok' | 'groq' | 'gemini' | 'ollama'. Defaults 'anthropic'."""
     p = (_read_env_or_secret("EXTRACTION_PROVIDER", "QSLITE_PROVIDER") or "anthropic").strip().lower()
     if p in ("grok", "xai"):
         return "grok"
     if p in ("groq", "llama"):
         return "groq"
-    if p in ("cloudflare", "cf", "workers-ai", "workersai"):
-        return "cloudflare"
+    if p in ("gemini", "google", "ai-studio"):
+        return "gemini"
     if p in ("ollama", "local"):
         return "ollama"
     return "anthropic"
@@ -86,8 +86,8 @@ def has_provider_key(provider: Optional[str] = None) -> bool:
         return bool(_read_env_or_secret("XAI_API_KEY", "GROK_API_KEY"))
     if p == "groq":
         return bool(_read_env_or_secret("GROQ_API_KEY"))
-    if p == "cloudflare":
-        return bool(_read_env_or_secret("CF_API_TOKEN") and _read_env_or_secret("CF_ACCOUNT_ID"))
+    if p == "gemini":
+        return bool(_read_env_or_secret("GEMINI_API_KEY", "GOOGLE_API_KEY"))
     if p == "ollama":
         return True  # local; first call surfaces real errors
     return bool(_read_env_or_secret("ANTHROPIC_API_KEY"))
@@ -103,10 +103,10 @@ def model_for(kind: str, provider: Optional[str] = None) -> str:
         if kind == "vision":
             return _read_env_or_secret("GROQ_VISION_MODEL") or "llama-3.2-90b-vision-preview"
         return _read_env_or_secret("GROQ_TEXT_MODEL") or "llama-3.3-70b-versatile"
-    if p == "cloudflare":
+    if p == "gemini":
         if kind == "vision":
-            return _read_env_or_secret("CF_VISION_MODEL") or "@cf/meta/llama-3.2-11b-vision-instruct"
-        return _read_env_or_secret("CF_TEXT_MODEL") or "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+            return _read_env_or_secret("GEMINI_VISION_MODEL") or "gemini-2.5-flash"
+        return _read_env_or_secret("GEMINI_TEXT_MODEL") or "gemini-2.5-flash"
     if p == "ollama":
         if kind == "vision":
             return _read_env_or_secret("OLLAMA_VISION_MODEL") or "llama3.2-vision:11b"
@@ -251,11 +251,10 @@ _OPENAI_COMPAT_CONFIG = {
         "key_names": (),  # local, no key
         "label": "Ollama (local)",
     },
-    "cloudflare": {
-        # base_url is templated per-account at call time
-        "base_url": "https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1",
-        "key_names": ("CF_API_TOKEN",),
-        "label": "Cloudflare Workers AI",
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "key_names": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        "label": "Google Gemini",
     },
 }
 
@@ -275,19 +274,6 @@ def _openai_compat_client(provider: str):
         base_url = (_read_env_or_secret("OLLAMA_URL") or base_url).rstrip("/")
         # Ollama doesn't validate the key but the OpenAI client requires one.
         return OpenAI(api_key="ollama", base_url=base_url)
-    if provider == "cloudflare":
-        # Account ID is templated into the URL — must be set
-        account_id = _read_env_or_secret("CF_ACCOUNT_ID")
-        if not account_id:
-            raise RuntimeError(
-                "CF_ACCOUNT_ID not set. Find it on dash.cloudflare.com (right-side panel) "
-                "and add CF_ACCOUNT_ID=... to .env or Streamlit secrets."
-            )
-        api_key = _read_env_or_secret("CF_API_TOKEN")
-        if not api_key:
-            raise RuntimeError("CF_API_TOKEN not set.")
-        base_url = base_url.replace("{ACCOUNT_ID}", account_id.strip())
-        return OpenAI(api_key=api_key, base_url=base_url)
     api_key = _read_env_or_secret(*cfg["key_names"]) if cfg["key_names"] else None
     if not api_key:
         first = cfg["key_names"][0] if cfg["key_names"] else "(none)"
@@ -379,7 +365,7 @@ def call_with_tools(
     max_tokens: int = 8192,
 ) -> ToolCallResult:
     p = active_provider()
-    if p in ("grok", "groq", "ollama", "cloudflare"):
+    if p in ("grok", "groq", "ollama", "gemini"):
         return _openai_compat_call_with_tools(p, messages, system, tools, tool_choice, kind, max_tokens)
     return _anthropic_call_with_tools(messages, system, tools, tool_choice, kind, max_tokens)
 
@@ -391,6 +377,6 @@ def call_text(
     max_tokens: int = 2048,
 ) -> str:
     p = active_provider()
-    if p in ("grok", "groq", "ollama", "cloudflare"):
+    if p in ("grok", "groq", "ollama", "gemini"):
         return _openai_compat_call_text(p, messages, system, kind, max_tokens)
     return _anthropic_call_text(messages, system, kind, max_tokens)
