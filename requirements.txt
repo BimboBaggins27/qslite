@@ -10,3 +10,4 @@ qrcode[pil]>=7.4
 streamlit-mic-recorder>=0.0.8
 streamlit-paste-button>=0.1.2
 cryptography>=42.0
+opencv-python-headless>=4.8

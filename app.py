@@ -64,6 +64,13 @@ except Exception:
     parse_voice_instruction = None
     _apply_voice_edits = None
 
+try:
+    from video_frames import extract_video_keyframes, is_video_filename, VIDEO_EXTS
+except Exception:
+    extract_video_keyframes = None
+    def is_video_filename(name: str) -> bool: return False
+    VIDEO_EXTS = set()
+
 
 st.set_page_config(
     page_title="QS Live — Quotation Studio",
@@ -125,7 +132,7 @@ def _site_password_gate() -> None:
     with cols[1]:
         pw = st.text_input("Site password", type="password", key="_site_pw_input",
                             label_visibility="collapsed", placeholder="Site password")
-        if st.button("🔓 Unlock", type="primary", use_container_width=True):
+        if st.button("Unlock", icon=":material/lock_open:", type="primary", use_container_width=True):
             if pw.strip() == expected:
                 st.session_state["_site_authed"] = True
                 st.rerun()
@@ -341,6 +348,71 @@ st.markdown(
     .qs-strip-cell:last-child { border-right: none; }
     .qs-strip-label { color: #475569; font-size: 0.75rem; }
     .qs-strip-value { font-weight: 600; color: #0A2540; }
+
+    /* ---------- Section rhythm — phase 3 ---------- */
+    /* Tighter vertical spacing between subheaders and content */
+    h2, h3 { margin-top: 0.6rem !important; margin-bottom: 0.4rem !important; }
+    [data-testid="stVerticalBlock"] > div + div { margin-top: 0.35rem; }
+
+    /* Subheaders inside bordered containers — smaller and ink-tinted */
+    [data-testid="stVerticalBlockBorderWrapper"] h2,
+    [data-testid="stVerticalBlockBorderWrapper"] h3 {
+        font-size: 1.05rem !important;
+        color: #0A2540 !important;
+        margin-bottom: 0.25rem !important;
+    }
+
+    /* Captions: a touch dimmer but still WCAG AA on white */
+    [data-testid="stCaptionContainer"], small.qs-caption {
+        color: #475569 !important;
+        font-size: 0.82rem !important;
+        line-height: 1.45;
+    }
+
+    /* Expander headers: reduce vertical padding */
+    [data-testid="stExpander"] summary {
+        padding: 8px 12px !important;
+        font-weight: 500;
+    }
+    [data-testid="stExpander"] [data-testid="stExpanderDetails"] {
+        padding: 8px 14px 10px 14px !important;
+    }
+
+    /* Sticky bottom action bar — appears on desktop ≥ 1024px around the issue button */
+    .qs-sticky-action {
+        position: sticky;
+        bottom: 0;
+        z-index: 30;
+        background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.96) 28%, #fff 100%);
+        padding: 12px 4px 14px 4px;
+        margin-top: 10px;
+        border-top: 1px solid rgba(120,140,160,0.16);
+    }
+
+    /* Section divider — subtle horizontal rule for grouping */
+    .qs-divider {
+        height: 1px;
+        background: linear-gradient(to right, transparent, rgba(120,140,160,0.25) 30%, rgba(120,140,160,0.25) 70%, transparent);
+        margin: 14px 0 10px 0;
+    }
+
+    /* Floating "scroll to top" pill — desktop only */
+    .qs-totop {
+        position: fixed;
+        right: 18px; bottom: 18px;
+        width: 40px; height: 40px;
+        border-radius: 999px;
+        background: #0A2540;
+        color: #fff !important;
+        text-decoration: none;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 1.1rem; font-weight: 700;
+        box-shadow: 0 6px 18px rgba(10,37,64,0.25);
+        opacity: 0.85; transition: opacity 0.15s ease;
+        z-index: 40;
+    }
+    .qs-totop:hover { opacity: 1; }
+    @media (max-width: 768px) { .qs-totop { display: none; } }
 
     /* ---------- Mobile (< 768px) ---------- */
     @media (max-width: 768px) {
@@ -850,6 +922,9 @@ if DEMO_MODE:
         "Every other feature works (review, edit, learner, locks, Excel export). Add a key in the sidebar to enable real vision extraction."
     )
 
+# Anchor for scroll-to-top floating link
+st.markdown('<div id="qs-top"></div>', unsafe_allow_html=True)
+
 # Hero header with brand mark
 hero_left, hero_right = st.columns([3, 2])
 with hero_left:
@@ -893,7 +968,7 @@ with st.sidebar:
     if key_manager.has_api_key():
         masked = key_manager.get_api_key()
         st.success(f"✓ Key set ({masked[:10]}…{masked[-4:]}, {len(masked)} chars)")
-        if st.button("Change / clear key", use_container_width=True):
+        if st.button("Change / clear key", icon=":material/key:", use_container_width=True):
             ss.show_key_input = True
             ss.key_input_seq += 1  # rotate widget key → fresh empty input
             st.rerun()
@@ -920,8 +995,8 @@ with st.sidebar:
             st.caption("👆 Paste your key into the field above.")
 
         col_save, col_clear = st.columns(2)
-        save_clicked = col_save.button("💾 Save", type="primary", use_container_width=True, key=f"save-{ss.key_input_seq}")
-        clear_clicked = col_clear.button("✕ Clear stored key", use_container_width=True, key=f"clear-{ss.key_input_seq}")
+        save_clicked = col_save.button("Save", icon=":material/save:", type="primary", use_container_width=True, key=f"save-{ss.key_input_seq}")
+        clear_clicked = col_clear.button("Clear stored key", icon=":material/close:", use_container_width=True, key=f"clear-{ss.key_input_seq}")
 
         if save_clicked:
             if not stripped:
@@ -990,7 +1065,7 @@ with st.sidebar:
     st.subheader("Controls")
     if versioning.can_undo(ss.history):
         last = versioning.last_label(ss.history)
-        if st.button(f"↶ Undo: {last}", use_container_width=True):
+        if st.button(f"Undo: {last}", icon=":material/undo:", use_container_width=True):
             restored, label = versioning.undo(ss.history)
             if restored is not None:
                 ss.line_items = restored
@@ -1113,7 +1188,7 @@ with tab_quote:
                     n_vat = st.text_input("VAT reg.", key="hd-newclient-vat")
                     n_addr = st.text_input("Site / address", key="hd-newclient-addr")
                     n_attn = st.text_input("Attention", key="hd-newclient-attn")
-                    if st.button("💾 Save & use", key="hd-newclient-save", type="primary", use_container_width=True):
+                    if st.button("Save & use", icon=":material/save:", key="hd-newclient-save", type="primary", use_container_width=True):
                         if not n1.strip():
                             st.error("Client name is required.")
                         else:
@@ -1171,7 +1246,7 @@ with tab_quote:
                     pn = st.text_input("Project name *", key="hd-newproject-name")
                     pc = st.text_input("Primary client", value=selected_client, key="hd-newproject-client")
                     p_notes = st.text_input("Notes", key="hd-newproject-notes")
-                    if st.button("💾 Save & use", key="hd-newproject-save", type="primary", use_container_width=True):
+                    if st.button("Save & use", icon=":material/save:", key="hd-newproject-save", type="primary", use_container_width=True):
                         if not pn.strip():
                             st.error("Project name is required.")
                         else:
@@ -1429,12 +1504,13 @@ with tab_quote:
     with st.container(border=True):
         st.subheader("1. Drop anything in — the AI decides what to do")
         st.caption(
-            "Photos, drawings, plans, PDFs — one or many. The AI figures out whether it's a single take-off, "
-            "a comparison between drawings, or something else. If it's stuck, it asks you instead of failing."
+            "Photos, drawings, plans, PDFs, **videos** — one or many. The AI figures out whether it's a single take-off, "
+            "a comparison between drawings, or a walk-through. Videos are auto-sampled into ~8 keyframes. "
+            "If it's stuck, it asks you instead of failing."
         )
         uploads = st.file_uploader(
             " ",
-            type=["png", "jpg", "jpeg", "webp", "pdf"],
+            type=["png", "jpg", "jpeg", "webp", "pdf", "mp4", "mov", "webm", "m4v"],
             accept_multiple_files=True,
             key="uploader",
             label_visibility="collapsed",
@@ -1476,7 +1552,7 @@ with tab_quote:
             paste_cols = st.columns([1, 4])
             with paste_cols[0]:
                 paste_result = paste_image_button(
-                    label="📋 Paste image",
+                    label="Paste image",
                     key=f"paste-img-{ss.ctx_seq}",
                     text_color="#0A2540",
                     background_color="#EAF1F8",
@@ -1516,9 +1592,29 @@ with tab_quote:
         if run and uploads:
             # Stash bytes on session state so we can re-call after a clarification answer.
             stashed = []
+            video_frame_total = 0
             for up in uploads:
                 is_pdf = (up.type == "application/pdf") or up.name.lower().endswith(".pdf")
+                is_video = is_video_filename(up.name) or (up.type or "").startswith("video/")
                 raw_bytes = up.getvalue()
+
+                if is_video and extract_video_keyframes is not None:
+                    suffix = "." + up.name.lower().rsplit(".", 1)[-1]
+                    with st.spinner(f"Sampling keyframes from {up.name}…"):
+                        frames = extract_video_keyframes(raw_bytes, n_frames=8, suffix=suffix)
+                    if not frames:
+                        st.warning(f"Couldn't read frames from {up.name} — install opencv-python-headless or check the format.")
+                        continue
+                    base = up.name.rsplit(".", 1)[0]
+                    for i, (png_bytes, mime, fname) in enumerate(frames):
+                        labelled_name = f"{base}__{fname}"
+                        stashed.append((png_bytes, mime, labelled_name))
+                        if labelled_name not in ss.uploads:
+                            ss.uploads[labelled_name] = {"bytes": png_bytes, "media_type": mime, "is_pdf": False}
+                    video_frame_total += len(frames)
+                    log("video_keyframes_extracted", details={"video": up.name, "frames": len(frames)})
+                    continue
+
                 stashed.append((raw_bytes, up.type or ("application/pdf" if is_pdf else "image/jpeg"), up.name))
 
                 # Thumbnail for source-files panel
@@ -1536,6 +1632,9 @@ with tab_quote:
                             ss.uploads[up.name] = {"bytes": b"", "media_type": "application/pdf", "is_pdf": True, "pdf_page_count": 0}
                     else:
                         ss.uploads[up.name] = {"bytes": raw_bytes, "media_type": up.type or "image/jpeg", "is_pdf": False}
+
+            if video_frame_total:
+                st.toast(f"Extracted {video_frame_total} keyframe(s) from video", icon="🎬")
 
             ss.unified_inputs = stashed
             ss.unified_context = extra_context or ""
@@ -1624,7 +1723,7 @@ with tab_quote:
 
         col_apply, col_discard = st.columns([1, 1])
         with col_apply:
-            if st.button("✓ Apply selected", type="primary", use_container_width=True):
+            if st.button("Apply selected", icon=":material/check:", type="primary", use_container_width=True):
                 take_snapshot("apply pending extraction")
                 added = 0
                 skipped_locked = 0
@@ -1641,7 +1740,7 @@ with tab_quote:
                 st.success(f"Applied {added} item(s)" + (f", skipped {skipped_locked} in locked zones" if skipped_locked else ""))
                 st.rerun()
         with col_discard:
-            if st.button("✕ Discard pending", use_container_width=True):
+            if st.button("Discard pending", icon=":material/close:", use_container_width=True):
                 log("discard_pending", details={"count": len(ss.pending_items)})
                 ss.pending_items = []
                 st.rerun()
@@ -1678,13 +1777,13 @@ with tab_quote:
                 f"**{len(pending)} item(s) awaiting confirmation.** "
                 "Use bulk actions below to skip clicking ✓ on every line."
             )
-            if cols[1].button(f"✓ Confirm all ({len(pending)})", type="primary", use_container_width=True, key="confirm-all"):
+            if cols[1].button(f"Confirm all ({len(pending)})", icon=":material/check:", type="primary", use_container_width=True, key="confirm-all"):
                 take_snapshot(f"confirm all ({len(pending)} items)")
                 for li in pending:
                     li.state = EditState.USER_CONFIRMED
                 log("confirm_all", details={"count": len(pending)})
                 st.rerun()
-            if cols[2].button("✓ Confirm green-band only", use_container_width=True,
+            if cols[2].button("Confirm green-band only", icon=":material/check_circle:", use_container_width=True,
                               key="confirm-green",
                               help="Confirm only items with confidence ≥ 0.8"):
                 green = [li for li in pending if li.confidence_band == "green"]
@@ -1712,7 +1811,7 @@ with tab_quote:
                 if zone_pending:
                     zb = st.columns([4, 1])
                     zb[0].caption(f"{len(zone_pending)} item(s) in this zone need confirmation.")
-                    if zb[1].button(f"✓ Confirm zone ({len(zone_pending)})", key=f"confirm-zone-{zone}", use_container_width=True):
+                    if zb[1].button(f"Confirm zone ({len(zone_pending)})", icon=":material/check:", key=f"confirm-zone-{zone}", use_container_width=True):
                         take_snapshot(f"confirm zone {zone}")
                         for li in zone_pending:
                             li.state = EditState.USER_CONFIRMED
@@ -1818,14 +1917,14 @@ with tab_quote:
                         rate_age = f" · rate {li.rate_age_days}d" if li.rate_age_days is not None else ""
                         st.markdown(f"{pill} `{li.confidence:.2f}` · {state_label}{rate_age}")
                         if li.state in (EditState.AI_SUGGESTED, EditState.USER_EDITED):
-                            if st.button("✓ Confirm", key=f"confirm-{li.id}"):
+                            if st.button("Confirm", icon=":material/check:", key=f"confirm-{li.id}"):
                                 take_snapshot(f"confirm {li.description[:30]}")
                                 li.state = EditState.USER_CONFIRMED
                                 log("confirm_item", li.id)
                                 st.rerun()
 
                     with c[7]:
-                        if st.button("✕", key=f"del-{li.id}", help="Remove line item"):
+                        if st.button("", icon=":material/delete:", key=f"del-{li.id}", help="Remove line item"):
                             items_to_remove.append(li.id)
 
         if items_to_remove:
@@ -1863,7 +1962,7 @@ with tab_quote:
                         )
                     options = ["— none —"] + [_opt(li) for li in filtered]
                     pick_li = st.selectbox("Item", options=options, key="learned-item-pick")
-                if pick_li != "— none —" and st.button("Add this learned item", key="learned-add"):
+                if pick_li != "— none —" and st.button("Add this learned item", icon=":material/add:", key="learned-add"):
                     idx = options.index(pick_li) - 1
                     src = filtered[idx]
                     take_snapshot("add learned item")
@@ -1902,7 +2001,7 @@ with tab_quote:
                 if man_zone == "+ new zone":
                     man_zone = st.text_input("New zone name", value="Default", key="manual-zone-new")
             with col5:
-                if st.button("Add", key="manual-add"):
+                if st.button("Add", icon=":material/add:", key="manual-add"):
                     take_snapshot("add manual item")
                     if rate_pick == "— custom —":
                         if not man_desc:
@@ -1973,7 +2072,7 @@ with tab_quote:
                         cols[3].write(sug.get("unit", ""))
                         cols[4].write(f"R {float(sug.get('rate_zar', 0)):,.2f}/{sug.get('unit', '')}")
                         # Include loop index in key — two items can share rate_code (or both None) and collide
-                        if cols[5].button("➕ Add", key=f"add-{s['id']}-{sug.get('rate_code') or 'norate'}-{sug_idx}"):
+                        if cols[5].button("Add", icon=":material/add:", key=f"add-{s['id']}-{sug.get('rate_code') or 'norate'}-{sug_idx}"):
                             take_snapshot("add from similar job")
                             new_id = uuid.uuid4().hex[:8]
                             ss.line_items.append(
@@ -2077,7 +2176,7 @@ with tab_quote:
                         elif op == "modify_header":
                             st.markdown(f"- **HEADER** {e.get('field')} → {e.get('value')!r}  *({reasoning})*")
                     apply_cols = st.columns(2)
-                    if apply_cols[0].button("✓ Apply edits", type="primary", use_container_width=True, key=f"voice-apply-{ss.voice_seq}"):
+                    if apply_cols[0].button("Apply edits", icon=":material/check:", type="primary", use_container_width=True, key=f"voice-apply-{ss.voice_seq}"):
                         take_snapshot(f"voice edit: {pe.get('summary', 'verbal')[:40]}")
                         ss.line_items, ss.quote_header, applied_log = _apply_voice_edits(
                             ss.line_items, ss.quote_header, pe["edits"]
@@ -2087,7 +2186,7 @@ with tab_quote:
                         log("voice_edit_applied", details={"summary": pe.get("summary", ""), "applied": applied_log})
                         st.toast(f"Applied {len(applied_log)} change(s)", icon="✅")
                         st.rerun()
-                    if apply_cols[1].button("✕ Discard", use_container_width=True, key=f"voice-discard-{ss.voice_seq}"):
+                    if apply_cols[1].button("Discard", icon=":material/close:", use_container_width=True, key=f"voice-discard-{ss.voice_seq}"):
                         ss.voice_edit_pending = None
                         ss.voice_seq += 1
                         st.rerun()
@@ -2165,9 +2264,12 @@ with tab_quote:
                     if missing_project: bits.append("**Project**")
                     st.error(f"❗ Required: {' and '.join(bits)} must be selected (or added) in the Quote header before issuing.")
 
+                st.markdown('<div class="qs-divider"></div>', unsafe_allow_html=True)
+                st.markdown('<div class="qs-sticky-action">', unsafe_allow_html=True)
                 issue_btn = st.button("Issue Quote (strict, reviewed)",
                                       icon=":material/check_circle:", type="primary",
-                                      disabled=(not ok) or hard_block)
+                                      disabled=(not ok) or hard_block,
+                                      use_container_width=True)
                 quick_btn = st.button(
                     "Quick Excel (skip review)",
                     icon=":material/bolt:",
@@ -2175,6 +2277,7 @@ with tab_quote:
                     disabled=(not ss.line_items) or hard_block,
                     use_container_width=True,
                 )
+                st.markdown('</div>', unsafe_allow_html=True)
                 if not ok:
                     summary = blocker_summary(ss.line_items)
                     if summary["empty"]:
@@ -2406,7 +2509,7 @@ with tab_admin:
 
     # ---------------- Clients ----------------
     with sub_clients:
-        with st.expander("➕ Add new client", expanded=False):
+        with st.expander("Add new client", icon=":material/add:", expanded=False):
             ac_cols = st.columns(2)
             with ac_cols[0]:
                 new_name = st.text_input("Client name *", key="adm-cn-name")
@@ -2416,7 +2519,7 @@ with tab_admin:
                 new_attn = st.text_input("Attention (contact name)", key="adm-cn-attn")
                 new_contact = st.text_input("Contact (phone / email)", key="adm-cn-contact")
                 new_notes = st.text_area("Notes", height=70, key="adm-cn-notes")
-            if st.button("💾 Save client", type="primary", key="adm-cn-save"):
+            if st.button("Save client", icon=":material/save:", type="primary", key="adm-cn-save"):
                 if not new_name.strip():
                     st.error("Client name is required.")
                 else:
@@ -2451,7 +2554,7 @@ with tab_admin:
                     with head_cols[1]:
                         st.metric("Quotes", c.get("quote_count", 0))
                     actions = st.columns(3)
-                    if actions[0].button("✏️ Edit", key=f"adm-cn-edit-{c['name']}", use_container_width=True):
+                    if actions[0].button("Edit", icon=":material/edit:", key=f"adm-cn-edit-{c['name']}", use_container_width=True):
                         ss[f"editing-cn-{c['name']}"] = True
                     if actions[1].button("Use in current quote", key=f"adm-cn-use-{c['name']}", use_container_width=True):
                         h = ss.quote_header
@@ -2462,7 +2565,7 @@ with tab_admin:
                         ss.quote_header = h
                         st.toast(f"{c['name']} loaded into current quote header.")
                         st.rerun()
-                    if actions[2].button("🗑 Delete", key=f"adm-cn-del-{c['name']}", use_container_width=True):
+                    if actions[2].button("Delete", icon=":material/delete:", key=f"adm-cn-del-{c['name']}", use_container_width=True):
                         if memory.delete_client(c["name"]):
                             log("admin_delete_client", details={"name": c["name"]})
                             st.toast(f"Deleted {c['name']}")
@@ -2479,7 +2582,7 @@ with tab_admin:
                                 e_contact = st.text_input("Contact", value=c.get("contact") or "")
                             e_notes = st.text_area("Notes", value=c.get("notes") or "", height=60)
                             sb1, sb2 = st.columns(2)
-                            saved = sb1.form_submit_button("💾 Save changes", type="primary", use_container_width=True)
+                            saved = sb1.form_submit_button("Save changes", icon=":material/save:", type="primary", use_container_width=True)
                             cancelled = sb2.form_submit_button("Cancel", use_container_width=True)
                         if saved:
                             memory.upsert_client(c["name"], e_vat, e_addr, e_attn, e_contact, e_notes)
@@ -2492,7 +2595,7 @@ with tab_admin:
 
     # ---------------- Projects ----------------
     with sub_projects:
-        with st.expander("➕ Add new project", expanded=False):
+        with st.expander("Add new project", icon=":material/add:", expanded=False):
             np_cols = st.columns(2)
             with np_cols[0]:
                 p_name = st.text_input("Project name *", key="adm-pj-name")
@@ -2500,7 +2603,7 @@ with tab_admin:
             with np_cols[1]:
                 p_status = st.selectbox("Status", ["active", "closed", "archived"], key="adm-pj-status")
                 p_notes = st.text_area("Notes", height=70, key="adm-pj-notes")
-            if st.button("💾 Save project", type="primary", key="adm-pj-save"):
+            if st.button("Save project", icon=":material/save:", type="primary", key="adm-pj-save"):
                 if not p_name.strip():
                     st.error("Project name is required.")
                 else:
@@ -2539,16 +2642,16 @@ with tab_admin:
                         st.toast(f"Project '{p['name']}' applied to current quote.")
                         st.rerun()
                     if p.get("created_at"):  # admin-managed only
-                        if actions[1].button("✏️ Edit", key=f"adm-pj-edit-{p['name']}", use_container_width=True):
+                        if actions[1].button("Edit", icon=":material/edit:", key=f"adm-pj-edit-{p['name']}", use_container_width=True):
                             ss[f"editing-pj-{p['name']}"] = True
-                        if actions[2].button("🗑 Delete", key=f"adm-pj-del-{p['name']}", use_container_width=True):
+                        if actions[2].button("Delete", icon=":material/delete:", key=f"adm-pj-del-{p['name']}", use_container_width=True):
                             if memory.delete_project_admin(p["name"]):
                                 log("admin_delete_project", details={"name": p["name"]})
                                 st.toast(f"Deleted project {p['name']}")
                                 st.rerun()
                     else:
                         actions[1].caption("(auto-inferred from past quote — promote by editing)")
-                        if actions[2].button("📌 Promote to managed", key=f"adm-pj-promote-{p['name']}", use_container_width=True):
+                        if actions[2].button("Promote to managed", icon=":material/push_pin:", key=f"adm-pj-promote-{p['name']}", use_container_width=True):
                             memory.upsert_project_admin(p["name"], p.get("primary_client") or "", p.get("notes") or "", "active")
                             st.toast(f"Promoted '{p['name']}' to managed project")
                             st.rerun()
@@ -2563,7 +2666,7 @@ with tab_admin:
                                                         index=["active", "closed", "archived"].index(p.get("status") or "active"))
                             e_notes = st.text_area("Notes", value=p.get("notes") or "", height=60)
                             sb1, sb2 = st.columns(2)
-                            saved = sb1.form_submit_button("💾 Save changes", type="primary", use_container_width=True)
+                            saved = sb1.form_submit_button("Save changes", icon=":material/save:", type="primary", use_container_width=True)
                             cancelled = sb2.form_submit_button("Cancel", use_container_width=True)
                         if saved:
                             memory.upsert_project_admin(p["name"], e_client, e_notes, e_status)
@@ -2694,7 +2797,7 @@ with tab_admin:
                     with head[1]:
                         st.metric("Rate", f"R {(med or 0):,.2f}" if med else "—")
                     with head[2]:
-                        if st.button("🗑", key=f"cat-del-{norm[:60]}", help="Remove from catalog"):
+                        if st.button("", icon=":material/delete:", key=f"cat-del-{norm[:60]}", help="Remove from catalog"):
                             memory.delete_learned_item(norm)
                             log("delete_learned_item", details={"description": desc})
                             st.rerun()
@@ -2709,7 +2812,7 @@ with tab_admin:
                                                    key=f"cat-rate-{norm[:60]}",
                                                    label_visibility="collapsed")
                     with edit_cols[2]:
-                        if st.button("Save", key=f"cat-save-{norm[:60]}", use_container_width=True):
+                        if st.button("Save", icon=":material/save:", key=f"cat-save-{norm[:60]}", use_container_width=True):
                             changed = False
                             if new_sub != sub:
                                 memory.update_learned_item_subcategory(norm, new_sub)
@@ -2767,7 +2870,7 @@ with tab_rates:
                 )
         with action_cols[1]:
             if xlsx_bytes and ss.get("work_folder"):
-                if st.button(f"💾 Save to work folder ({ss.work_folder}\\reviews\\)",
+                if st.button(f"Save to work folder ({ss.work_folder}\\reviews\\)", icon=":material/save:",
                              use_container_width=True, key="save-review-btn"):
                     try:
                         target = Path(ss.work_folder) / "reviews"
@@ -2812,7 +2915,7 @@ with tab_rates:
                         suggested = round(entry["rate_zar"] * (1 + entry["drift_pct"]), 2)
                         st.caption(f"Suggested: R {suggested:,.2f}")
                 with cols[5]:
-                    if st.button("Save", key=f"saverate-{entry['code']}"):
+                    if st.button("Save", icon=":material/save:", key=f"saverate-{entry['code']}"):
                         if rate_review.apply_one_uplift(entry["code"], new_val):
                             log("rate_uplift", details={"code": entry["code"], "old": entry["rate_zar"], "new": new_val})
                             st.success(f"Updated {entry['code']}")
@@ -2831,7 +2934,7 @@ with tab_rates:
     with bcol3:
         only_stale = st.checkbox("Only stale (>90d)", value=True, key="bulk-stale")
     with bcol4:
-        if st.button("Apply uplift", key="bulk-apply"):
+        if st.button("Apply uplift", icon=":material/trending_up:", key="bulk-apply"):
             n = rate_review.apply_bulk_uplift(
                 trade=None if bulk_trade == "(all)" else bulk_trade,
                 pct=bulk_pct / 100.0,
@@ -2857,3 +2960,10 @@ with tab_audit:
             iid = e.get("item_id") or ""
             details = e.get("details") or {}
             st.code(f"{ts}  {action:<22} {iid:<10} {json.dumps(details, default=str)}", language=None)
+
+
+# Floating scroll-to-top — desktop only
+st.markdown(
+    '<a class="qs-totop" href="#qs-top" title="Back to top">↑</a>',
+    unsafe_allow_html=True,
+)
