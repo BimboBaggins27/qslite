@@ -156,15 +156,12 @@ if LOGO_PATH.exists():
     except Exception:
         pass
 
-st.markdown(
-    """
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <style>
-    /* ============================================================
-       QSLite design tokens — modern, contemporary
-       ============================================================ */
+_QSLITE_CSS = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* QSLite design tokens — modern, contemporary */
     :root {
         --ink:       #0F172A;   /* slate-900 — primary text */
         --ink-2:     #334155;   /* slate-700 — secondary text */
@@ -700,10 +697,12 @@ st.markdown(
         [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
         .qs-hero img { display: none; }
     }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+</style>
+"""
+
+# st.html() injects raw HTML without markdown processing — avoids the leading-
+# whitespace-as-code-block trap that bit us when we used st.markdown for CSS.
+st.html(_QSLITE_CSS)
 
 # ---------- session state ----------
 
