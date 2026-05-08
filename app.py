@@ -512,6 +512,44 @@ def _safe_filename(s: str, default: str = "quote") -> str:
     return (cleaned or default)[:80]
 
 
+def _to_iso_date(s: str) -> str:
+    """Parse common date strings into YYYY-MM-DD. Returns '' on failure.
+    Handles: '2026-05-07', '7 May 2026', '7th May 2026', '3rd April 2025'."""
+    if not s:
+        return ""
+    s = s.strip()
+    from datetime import datetime
+    import re as _re
+    # Strip ordinal suffixes (1st, 2nd, 3rd, 4th-31st)
+    cleaned = _re.sub(r"(\d+)(st|nd|rd|th)\b", r"\1", s, flags=_re.IGNORECASE)
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d %B %Y", "%d %b %Y", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+    return ""
+
+
+def _today_iso() -> str:
+    from datetime import datetime
+    return datetime.utcnow().strftime("%Y-%m-%d")
+
+
+def _quote_filename_base(quote_payload: dict) -> str:
+    """Build a human-readable basename: '{Quote No.} — {ISO date} — {scope}'.
+
+    Examples:
+      'NPQ 7173 — 2025-04-03 — Proposed new dry wall to Building 1 MBP'
+      'NPQ-2026-WS17-001 — 2026-05-07 — Free issue install of acoustic partition'
+    """
+    header = quote_payload.get("header") or {}
+    qno = _safe_filename(header.get("quote_no") or quote_payload.get("memory_id") or "quote")
+    iso_date = _to_iso_date(header.get("quote_date") or "") or _today_iso()
+    scope_raw = (header.get("re_subject") or header.get("quote_name") or "scope").strip()
+    scope = _safe_filename(scope_raw, "scope")[:60].rstrip(" -—_.")
+    return f"{qno} — {iso_date} — {scope}"
+
+
 def _record_learning_from_quote(quote_payload: dict) -> None:
     """Save the client info + every line item into the learning catalog."""
     header = quote_payload.get("header") or {}
@@ -537,10 +575,94 @@ def _record_learning_from_quote(quote_payload: dict) -> None:
             continue
 
 
+def _migrate_old_layout(work_folder: str, dry_run: bool = True) -> dict:
+    """Walk old `projects/{P}/quotes/{Q}/*.{pdf,xlsx,json}` and re-organise into
+    `clients/{C}/{P}/{Quote No.} — {date} — {scope}.{ext}`.
+
+    For each quote, reads its .json file to get authoritative client/project/scope
+    (since folder names can be stale or generic). Returns a report dict.
+    """
+    folder = Path(work_folder)
+    old_root = folder / "projects"
+    new_root = folder / "clients"
+    if not old_root.exists():
+        return {"old_root_exists": False, "moved": 0, "skipped": 0, "errors": []}
+
+    moved: list[tuple[str, str]] = []
+    skipped: list[str] = []
+    errors: list[str] = []
+
+    for quote_dir in old_root.glob("*/quotes/*/"):
+        try:
+            json_files = list(quote_dir.glob("*.json"))
+            if not json_files:
+                skipped.append(f"no .json in {quote_dir}")
+                continue
+            payload = json.loads(json_files[0].read_text(encoding="utf-8"))
+            header = payload.get("header") or {}
+            client = _safe_filename(header.get("client_name") or "_unfiled", "_unfiled")
+            project = _safe_filename(header.get("project") or quote_dir.parent.parent.name or "_unfiled", "_unfiled")
+            target_dir = new_root / client / project
+            base = _quote_filename_base(payload)
+
+            for ext in ("pdf", "xlsx", "json"):
+                src_candidates = list(quote_dir.glob(f"*.{ext}"))
+                if not src_candidates:
+                    continue
+                src = src_candidates[0]
+                dst = target_dir / f"{base}.{ext}"
+                if not dry_run:
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                    if dst.exists():
+                        skipped.append(f"target exists: {dst.name}")
+                        continue
+                    src.replace(dst)  # atomic move on same filesystem
+                moved.append((str(src), str(dst)))
+        except Exception as e:
+            errors.append(f"{quote_dir}: {e}")
+
+    # Clean up empty old subfolders (best-effort, only if not dry-run)
+    if not dry_run:
+        for d in sorted(old_root.glob("*/quotes/*/"), reverse=True):
+            try:
+                if not any(d.iterdir()):
+                    d.rmdir()
+            except Exception:
+                pass
+        for d in sorted(old_root.glob("*/quotes/"), reverse=True):
+            try:
+                if not any(d.iterdir()):
+                    d.rmdir()
+            except Exception:
+                pass
+        for d in sorted(old_root.glob("*/"), reverse=True):
+            try:
+                if not any(d.iterdir()):
+                    d.rmdir()
+            except Exception:
+                pass
+
+    return {
+        "old_root_exists": True,
+        "dry_run": dry_run,
+        "moved": len(moved),
+        "skipped": len(skipped),
+        "errors": errors,
+        "examples": [(Path(s).name, Path(d).name) for s, d in moved[:5]],
+    }
+
+
 def _autosave_to_work_folder(quote_payload: dict) -> Optional[str]:
-    """Save issued PDF + Excel + JSON under {work_folder}/projects/{project}/quotes/{quote_no}/.
-    A client may have many projects, so structure is project-first, quote-no-second.
-    Falls back to '_unfiled' when no project name is set."""
+    """Save issued PDF + Excel + JSON under:
+        {work_folder}/clients/{Client}/{Project}/{Quote No.} — {date} — {scope}.{ext}
+
+    Hierarchy is CLIENT → PROJECT → quote files. A client has many projects,
+    each project has many quotes. No per-quote subfolder — files sit flat in
+    the project folder so a single project's quotes are scannable at a glance.
+
+    Filename leads with quote no., then ISO date (sortable), then short scope
+    summary so you know what each file IS without opening.
+    """
     folder = (ss.get("work_folder") or "").strip()
     if not folder:
         return None
@@ -549,18 +671,27 @@ def _autosave_to_work_folder(quote_payload: dict) -> Optional[str]:
         from pdf_render import render_quote_pdf
 
         header = quote_payload.get("header") or {}
+        client = _safe_filename(header.get("client_name") or "_unfiled", "_unfiled")
         project = _safe_filename(header.get("project") or "_unfiled", "_unfiled")
-        client = _safe_filename(header.get("client_name") or "client", "client")
-        quote_no = _safe_filename(header.get("quote_no") or quote_payload.get("memory_id") or "quote")
-        target_dir = Path(folder) / "projects" / project / "quotes" / quote_no
+        target_dir = Path(folder) / "clients" / client / project
         target_dir.mkdir(parents=True, exist_ok=True)
-        base = f"{quote_no} — {client}"
+
+        base = _quote_filename_base(quote_payload)
+        # Append (v2), (v3) … if the same base already exists
+        candidate = base
+        n = 1
+        while (target_dir / f"{candidate}.pdf").exists():
+            n += 1
+            candidate = f"{base} (v{n})"
+        base = candidate
+
         (target_dir / f"{base}.pdf").write_bytes(render_quote_pdf(quote_payload))
         (target_dir / f"{base}.xlsx").write_bytes(issued_quote_to_xlsx(quote_payload))
         (target_dir / f"{base}.json").write_text(
             json.dumps(quote_payload, indent=2, default=str), encoding="utf-8"
         )
         ss["last_saved_dir"] = str(target_dir)
+        ss["last_saved_base"] = base
         return str(target_dir)
     except Exception as e:
         ss["last_saved_dir"] = None
@@ -1976,7 +2107,8 @@ with tab_quote:
                     st.info(f"💾 Auto-saved to: `{ss.last_saved_dir}`")
                 elif ss.get("last_saved_error"):
                     st.warning(f"Auto-save failed: {ss.last_saved_error}. PDF/Excel still downloadable below.")
-                stamp = ss.frozen_quote["issued_at"].replace(":", "-")
+                # Use the readable filename convention everywhere
+                base_name = _quote_filename_base(ss.frozen_quote)
                 try:
                     pdf_bytes = render_quote_pdf(ss.frozen_quote)
                 except Exception as e:
@@ -1988,24 +2120,24 @@ with tab_quote:
                 with d1:
                     if pdf_bytes:
                         st.download_button(
-                            "📄 Download PDF",
+                            "Download PDF", icon=":material/picture_as_pdf:",
                             data=pdf_bytes,
-                            file_name=f"quote-{stamp}.pdf",
+                            file_name=f"{base_name}.pdf",
                             mime="application/pdf",
                             type="primary",
                             use_container_width=True,
                         )
                 with d2:
                     st.download_button(
-                        "📊 Download Excel",
+                        "Download Excel", icon=":material/grid_on:",
                         data=xlsx_bytes,
-                        file_name=f"quote-{stamp}.xlsx",
+                        file_name=f"{base_name}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True,
                     )
 
                 if pdf_bytes:
-                    with st.expander("📄 Preview PDF (in-app)", expanded=True):
+                    with st.expander("Preview PDF (in-app)", expanded=True, icon=":material/preview:"):
                         try:
                             pages_png = pdf_pages_to_pngs(pdf_bytes, scale=1.5)
                             if len(pages_png) > 1:
@@ -2015,11 +2147,11 @@ with tab_quote:
                         except Exception as e:
                             st.warning(f"Could not render PDF preview inline: {e}")
 
-                with st.expander("Also download as JSON"):
+                with st.expander("Also download as JSON", icon=":material/code:"):
                     st.download_button(
                         "Download JSON snapshot",
                         data=json.dumps(ss.frozen_quote, indent=2, default=str),
-                        file_name=f"quote-{stamp}.json",
+                        file_name=f"{base_name}.json",
                         mime="application/json",
                     )
             else:
@@ -2174,10 +2306,14 @@ with tab_past:
     ]
     st.markdown(f'<div class="qs-strip">{"".join(stats_cells)}</div>', unsafe_allow_html=True)
 
-    fcol1, fcol2 = st.columns([3, 2])
+    fcol1, fcol2, fcol3 = st.columns([2, 2, 2])
     with fcol1:
-        search_term = st.text_input("Search (client / project / quote no. / subject / labels)",
-                                    value="", key="past-search", placeholder="e.g. ATESS, drywall, NPQ")
+        try:
+            _client_rows = memory.list_clients() or []
+        except Exception:
+            _client_rows = []
+        all_clients = sorted({(c.get("name") or "").strip() for c in _client_rows if c.get("name")})
+        client_filter = st.selectbox("Client", ["(all)"] + all_clients + ["(no client)"], key="past-client")
     with fcol2:
         try:
             _proj_rows = memory.list_projects() or []
@@ -2185,52 +2321,77 @@ with tab_past:
             _proj_rows = []
         all_projects = sorted({p.get("project") for p in _proj_rows if p.get("project") and p.get("project") != "(no project)"})
         project_filter = st.selectbox("Project", ["(all)"] + all_projects + ["(no project)"], key="past-project")
+    with fcol3:
+        search_term = st.text_input("Search", value="", key="past-search",
+                                    placeholder="quote no. / subject / labels")
 
     project_arg = None if project_filter == "(all)" else (None if project_filter == "(no project)" else project_filter)
+    client_arg = None if client_filter == "(all)" else (None if client_filter == "(no client)" else client_filter)
     quotes = memory.list_quotes(
         project=project_arg,
+        client_name=client_arg,
         search=search_term.strip() or None,
     )
-    # Extra filter for "(no project)"
     if project_filter == "(no project)":
         quotes = [q for q in quotes if not q["project"]]
+    if client_filter == "(no client)":
+        quotes = [q for q in quotes if not q["client_name"]]
 
     if not quotes:
         st.info("No issued quotes match. Issue a quote from the Quote builder tab to see it here.")
     else:
-        # Group by project
-        by_project: dict[str, list] = {}
+        # Two-level grouping: client → project → quotes
+        by_client_project: dict[str, dict[str, list]] = {}
         for q in quotes:
-            key = q["project"] or "(no project)"
-            by_project.setdefault(key, []).append(q)
+            client_key = q["client_name"] or "(no client)"
+            project_key = q["project"] or "(no project)"
+            by_client_project.setdefault(client_key, {}).setdefault(project_key, []).append(q)
 
-        for project_name in sorted(by_project.keys()):
-            group = by_project[project_name]
-            project_total = sum((q["total_zar"] or 0) for q in group)
+        for client_name in sorted(by_client_project.keys()):
+            projects = by_client_project[client_name]
+            client_quote_count = sum(len(g) for g in projects.values())
+            client_total = sum(sum((q["total_zar"] or 0) for q in g) for g in projects.values())
+            project_count = len(projects)
             with st.expander(
-                f"📁 **{project_name}** — {len(group)} quote(s) · R {project_total:,.2f} total",
+                f"**{client_name}** · {project_count} project(s) · {client_quote_count} quote(s) · R {client_total:,.2f}",
                 expanded=True,
+                icon=":material/business:",
             ):
-                for q in group:
-                    st.markdown(_quote_card(dict(q)), unsafe_allow_html=True)
-                    bcols = st.columns([1, 1, 1, 2])
-                    with bcols[0]:
-                        if st.button("👁 View", key=f"view-{q['id']}", use_container_width=True):
-                            if _load_past_quote_into_workspace(q["id"], mode="view"):
-                                st.toast("Loaded as read-only — switch to Quote builder tab to download.")
-                                st.rerun()
-                    with bcols[1]:
-                        if st.button("✏️ Open as draft", key=f"draft-{q['id']}", use_container_width=True,
-                                     help="Pull items into a fresh editable draft. Client/quote info reset."):
-                            if _load_past_quote_into_workspace(q["id"], mode="draft"):
-                                st.toast("Opened as a draft — switch to Quote builder tab.")
-                                st.rerun()
-                    with bcols[2]:
-                        if st.button("🔁 New variation", key=f"var-{q['id']}", use_container_width=True,
-                                     help="Clone items AND client info; fresh quote no. and date. Links to parent."):
-                            if _load_past_quote_into_workspace(q["id"], mode="variation"):
-                                st.toast("Opened as a variation — same client, same project, fresh quote.")
-                                st.rerun()
+                for project_name in sorted(projects.keys()):
+                    group = projects[project_name]
+                    project_total = sum((q["total_zar"] or 0) for q in group)
+                    if project_count > 1 or project_name != "(no project)":
+                        st.markdown(
+                            f'<div style="margin:14px 0 6px 0; padding:6px 10px; '
+                            f'background:#F4F8FA; border-left:3px solid #13B5EA; border-radius:6px;">'
+                            f'<b style="color:#0A2540">{project_name}</b> '
+                            f'<span style="color:#475569; font-size:0.9em">'
+                            f'· {len(group)} quote(s) · R {project_total:,.2f}</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    for q in group:
+                        st.markdown(_quote_card(dict(q)), unsafe_allow_html=True)
+                        bcols = st.columns([1, 1, 1, 2])
+                        with bcols[0]:
+                            if st.button("View", icon=":material/visibility:",
+                                         key=f"view-{q['id']}", use_container_width=True):
+                                if _load_past_quote_into_workspace(q["id"], mode="view"):
+                                    st.toast("Loaded as read-only — switch to Quote builder tab to download.")
+                                    st.rerun()
+                        with bcols[1]:
+                            if st.button("Open as draft", icon=":material/edit:",
+                                         key=f"draft-{q['id']}", use_container_width=True,
+                                         help="Pull items into a fresh editable draft. Client/quote info reset."):
+                                if _load_past_quote_into_workspace(q["id"], mode="draft"):
+                                    st.toast("Opened as a draft — switch to Quote builder tab.")
+                                    st.rerun()
+                        with bcols[2]:
+                            if st.button("New variation", icon=":material/content_copy:",
+                                         key=f"var-{q['id']}", use_container_width=True,
+                                         help="Clone items AND client info; fresh quote no. and date. Links to parent."):
+                                if _load_past_quote_into_workspace(q["id"], mode="variation"):
+                                    st.toast("Opened as a variation — same client, same project, fresh quote.")
+                                    st.rerun()
 
 
 # ============================================================================
@@ -2415,6 +2576,42 @@ with tab_admin:
 
     # ---------------- Catalog (learned items from past quotes) ----------------
     with sub_catalog:
+        # ----- Migration: old projects/ layout → new clients/{C}/{P}/ layout -----
+        with st.container(border=True):
+            mcols = st.columns([3, 1, 1])
+            with mcols[0]:
+                st.markdown("**Folder layout migration** *(old `projects/{P}/quotes/{Q}/` → new `clients/{Client}/{Project}/`)*")
+                st.caption("Reads each quote's JSON to get the authoritative client + project, "
+                           "then renames files to `{Quote No.} — {ISO date} — {scope}.{ext}` and moves them. "
+                           "Dry run first to preview.")
+            with mcols[1]:
+                if st.button("Dry run", icon=":material/search:", use_container_width=True, key="mig-dry"):
+                    if not ss.get("work_folder"):
+                        st.error("Set a Work folder in the sidebar first.")
+                    else:
+                        report = _migrate_old_layout(ss.work_folder, dry_run=True)
+                        if not report.get("old_root_exists"):
+                            st.info("No `projects/` folder under work folder — nothing to migrate.")
+                        else:
+                            st.success(f"Would move {report['moved']} file(s); skip {report['skipped']}; errors {len(report['errors'])}")
+                            if report.get("examples"):
+                                st.markdown("**Sample renames:**")
+                                for src_name, dst_name in report["examples"]:
+                                    st.markdown(f"- `{src_name}` → `{dst_name}`")
+            with mcols[2]:
+                if st.button("Migrate", icon=":material/forward:", use_container_width=True, type="primary", key="mig-go"):
+                    if not ss.get("work_folder"):
+                        st.error("Set a Work folder in the sidebar first.")
+                    else:
+                        report = _migrate_old_layout(ss.work_folder, dry_run=False)
+                        log("layout_migration", details=report)
+                        st.success(f"Migrated {report['moved']} file(s) into `clients/{{Client}}/{{Project}}/` layout")
+                        if report.get("errors"):
+                            st.error(f"{len(report['errors'])} error(s):")
+                            for e in report["errors"][:5]:
+                                st.markdown(f"- {e}")
+                        st.rerun()
+
         # Backfill + Backup banner
         with st.container(border=True):
             bcols = st.columns([2, 1, 1])
@@ -2422,14 +2619,14 @@ with tab_admin:
                 st.markdown("**Backfill from past quotes**")
                 st.caption("Sweep every line item from `issued_quote_items` into the catalog (catches items missed before the learning hook was wired).")
             with bcols[1]:
-                if st.button("🔄 Backfill catalog", use_container_width=True, type="primary"):
+                if st.button("Backfill catalog", icon=":material/sync:", use_container_width=True, type="primary"):
                     n = memory.backfill_learned_items_from_quotes()
                     log("backfill_catalog", details={"items_processed": n})
                     st.toast(f"Backfilled {n} item(s) from past quotes", icon="✅")
                     st.rerun()
             with bcols[2]:
                 # DB backup — copy memory.sqlite into the work folder with a timestamp
-                if st.button("💾 Backup DB", use_container_width=True,
+                if st.button("Backup DB", icon=":material/save:", use_container_width=True,
                              help="Copies the SQLite database to {work_folder}/backups/ with a timestamp"):
                     try:
                         import shutil
