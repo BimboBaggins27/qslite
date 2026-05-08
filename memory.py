@@ -119,6 +119,64 @@ CREATE TABLE IF NOT EXISTS learned_items (
 CREATE INDEX IF NOT EXISTS idx_learned_trade ON learned_items(trade);
 CREATE INDEX IF NOT EXISTS idx_learned_subcategory ON learned_items(subcategory);
 CREATE INDEX IF NOT EXISTS idx_learned_freq ON learned_items(frequency DESC);
+
+-- ============================================================================
+-- Invoicing & receivables (Pastel-equivalent for SA construction)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS invoices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_no TEXT UNIQUE NOT NULL,
+    client_name TEXT NOT NULL,
+    client_address TEXT,
+    client_vat_reg TEXT,
+    client_attention TEXT,
+    project_name TEXT,
+    quote_id TEXT,                          -- nullable; set when created from a quote
+    invoice_date TEXT NOT NULL,
+    due_date TEXT,
+    subtotal REAL NOT NULL,                 -- ex-VAT
+    vat_pct REAL NOT NULL DEFAULT 15.0,
+    vat_amount REAL NOT NULL,
+    retention_pct REAL DEFAULT 0,
+    retention_amount REAL DEFAULT 0,
+    total REAL NOT NULL,                    -- subtotal + vat - retention
+    status TEXT NOT NULL DEFAULT 'draft',   -- draft|issued|partial|paid|void
+    re_subject TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (quote_id) REFERENCES issued_quotes(id)
+);
+
+CREATE TABLE IF NOT EXISTS invoice_lines (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    quantity REAL NOT NULL,
+    unit TEXT NOT NULL,
+    rate REAL NOT NULL,
+    amount REAL NOT NULL,
+    trade TEXT,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id INTEGER NOT NULL,
+    payment_date TEXT NOT NULL,
+    amount REAL NOT NULL,
+    method TEXT,                            -- EFT|cash|card|cheque|other
+    reference TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_name);
+CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+CREATE INDEX IF NOT EXISTS idx_invoices_quote ON invoices(quote_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_date ON invoices(invoice_date);
+CREATE INDEX IF NOT EXISTS idx_payments_invoice ON payments(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_payments_date ON payments(payment_date);
 """
 
 

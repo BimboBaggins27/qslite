@@ -13,7 +13,9 @@ load_dotenv(Path(__file__).parent / ".env")
 
 import streamlit as st
 
+import company_profile
 import demo_extractor
+import invoices
 import key_manager
 import learner
 import memory
@@ -21,6 +23,7 @@ import providers
 import rate_review
 import validators
 import versioning
+from invoice_pdf import render_invoice_pdf, render_statement_pdf
 from excel import issued_quote_to_xlsx
 from extract import (
     extract_diff_from_files,
@@ -1138,10 +1141,11 @@ with st.sidebar:
 # Live system-health strip — visible at all times so the operator knows the state
 st.markdown(_system_health_strip(), unsafe_allow_html=True)
 
-tab_quote, tab_past, tab_admin, tab_rates, tab_audit = st.tabs(
+tab_quote, tab_past, tab_invoices, tab_admin, tab_rates, tab_audit = st.tabs(
     [
         ":material/architecture: Quote builder",
         ":material/folder: Past quotes",
+        ":material/request_quote: Invoices",
         ":material/contacts: Clients & Projects",
         ":material/payments: Rate review queue",
         ":material/receipt_long: Audit log",
@@ -2514,7 +2518,7 @@ with tab_past:
                         )
                     for q in group:
                         st.markdown(_quote_card(dict(q)), unsafe_allow_html=True)
-                        bcols = st.columns([1, 1, 1, 2])
+                        bcols = st.columns([1, 1, 1, 1, 1])
                         with bcols[0]:
                             if st.button("View", icon=":material/visibility:",
                                          key=f"view-{q['id']}", use_container_width=True):
@@ -2535,10 +2539,414 @@ with tab_past:
                                 if _load_past_quote_into_workspace(q["id"], mode="variation"):
                                     st.toast("Opened as a variation — same client, same project, fresh quote.")
                                     st.rerun()
+                        with bcols[3]:
+                            if st.button("Convert to invoice", icon=":material/request_quote:",
+                                         key=f"inv-from-{q['id']}", use_container_width=True,
+                                         help="Create a draft tax invoice from this quote (15% VAT, 30-day terms). Open the Invoices tab to edit/issue."):
+                                try:
+                                    new_inv_id = invoices.convert_quote_to_invoice(q["id"])
+                                    log("invoice_created_from_quote", details={
+                                        "invoice_id": new_inv_id, "quote_id": q["id"],
+                                    })
+                                    st.toast(f"Draft invoice created — see Invoices tab.", icon="🧾")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Failed to create invoice: {e}")
 
 
 # ============================================================================
-# TAB 3 — CLIENTS & PROJECTS (manage the database explicitly)
+# TAB 3 — INVOICES (Pastel-equivalent for SA construction)
+# ============================================================================
+
+with tab_invoices:
+    st.subheader("Invoices & receivables")
+    st.caption(
+        "Convert issued quotes to tax invoices, record payments, track aged debtors, "
+        "and issue per-client statements. SARS-compliant tax invoice format (15% VAT)."
+    )
+
+    sub_inv_list, sub_aged, sub_statements = st.tabs([
+        ":material/list_alt: Invoices",
+        ":material/insights: Aged debtors",
+        ":material/description: Statements",
+    ])
+
+    # ---- Invoice list / detail ---------------------------------------------
+    with sub_inv_list:
+        # Filter row
+        f1, f2, f3 = st.columns([2, 2, 1])
+        with f1:
+            inv_filter_client = st.selectbox(
+                "Client",
+                options=["(all)"] + [c["name"] for c in memory.list_clients()],
+                key="inv-flt-client",
+            )
+        with f2:
+            inv_filter_status = st.selectbox(
+                "Status",
+                options=["(all)", "draft", "issued", "partial", "paid", "void"],
+                key="inv-flt-status",
+            )
+        with f3:
+            if st.button("Refresh", icon=":material/refresh:", use_container_width=True, key="inv-refresh"):
+                st.rerun()
+
+        client_arg = None if inv_filter_client == "(all)" else inv_filter_client
+        status_arg = None if inv_filter_status == "(all)" else inv_filter_status
+        inv_rows = invoices.list_invoices(client_name=client_arg, status=status_arg)
+
+        if not inv_rows:
+            st.info(
+                "No invoices yet. Create one from the **Past quotes** tab "
+                "(Convert to invoice button) or add a manual invoice below."
+            )
+        else:
+            # Summary metrics
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.metric("Invoices", str(len(inv_rows)))
+            with m2:
+                st.metric("Total invoiced", f"R {sum(r['total'] for r in inv_rows):,.0f}")
+            with m3:
+                st.metric("Paid to date", f"R {sum(r['paid_total'] for r in inv_rows):,.0f}")
+            with m4:
+                st.metric("Outstanding", f"R {sum(r['balance'] for r in inv_rows):,.0f}")
+
+            st.markdown("---")
+            for inv in inv_rows:
+                status_pill = {
+                    "draft":   "⚪ Draft",
+                    "issued":  "🔵 Issued",
+                    "partial": "🟡 Partial",
+                    "paid":    "🟢 Paid",
+                    "void":    "⚫ Void",
+                }.get(inv["status"], inv["status"])
+                title = f"{inv['invoice_no']} · {inv['client_name']} · R {inv['total']:,.2f} · {status_pill}"
+                if inv["balance"] > 0:
+                    title += f" · balance R {inv['balance']:,.2f}"
+                with st.expander(title, expanded=False):
+                    full = invoices.get_invoice(inv["id"])
+                    if not full:
+                        st.error("Invoice missing.")
+                        continue
+                    # Header info
+                    cols = st.columns([2, 2, 2])
+                    with cols[0]:
+                        st.markdown(f"**Date:** {full['invoice_date']}")
+                        st.markdown(f"**Due:** {full['due_date']}")
+                        if full.get("project_name"):
+                            st.markdown(f"**Project:** {full['project_name']}")
+                    with cols[1]:
+                        st.markdown(f"**Subtotal:** R {full['subtotal']:,.2f}")
+                        st.markdown(f"**VAT @ {full['vat_pct']:g}%:** R {full['vat_amount']:,.2f}")
+                        if full.get("retention_amount"):
+                            st.markdown(f"**Retention ({full['retention_pct']:g}%):** R {full['retention_amount']:,.2f}")
+                        st.markdown(f"**Total:** R {full['total']:,.2f}")
+                    with cols[2]:
+                        st.markdown(f"**Paid:** R {full['paid_total']:,.2f}")
+                        st.markdown(f"**Balance:** R {full['balance']:,.2f}")
+
+                    # Line items
+                    if full["lines"]:
+                        st.markdown("**Lines:**")
+                        line_rows = [
+                            {
+                                "Description": ln["description"],
+                                "Qty": ln["quantity"],
+                                "Unit": ln["unit"],
+                                "Rate": f"R {ln['rate']:,.2f}",
+                                "Amount": f"R {ln['amount']:,.2f}",
+                            }
+                            for ln in full["lines"]
+                        ]
+                        st.dataframe(line_rows, use_container_width=True, hide_index=True)
+
+                    # Payments
+                    if full["payments"]:
+                        st.markdown("**Payments:**")
+                        for p in full["payments"]:
+                            pcols = st.columns([3, 1])
+                            with pcols[0]:
+                                ref_bit = f" · ref {p['reference']}" if p.get("reference") else ""
+                                st.markdown(f"• {p['payment_date']} · R {p['amount']:,.2f} · {p.get('method') or 'EFT'}{ref_bit}")
+                            with pcols[1]:
+                                if st.button("Delete", icon=":material/delete:", key=f"del-pay-{p['id']}", use_container_width=True):
+                                    invoices.delete_payment(p["id"])
+                                    log("payment_deleted", details={"payment_id": p["id"], "invoice_id": full["id"]})
+                                    st.rerun()
+
+                    # Record payment
+                    if full["balance"] > 0.005:
+                        with st.expander("Record payment", icon=":material/payments:"):
+                            pcol1, pcol2, pcol3 = st.columns([1, 1, 2])
+                            with pcol1:
+                                pay_amount = st.number_input(
+                                    "Amount",
+                                    min_value=0.0,
+                                    max_value=float(full["balance"]),
+                                    value=float(full["balance"]),
+                                    step=100.0,
+                                    key=f"pay-amt-{full['id']}",
+                                )
+                            with pcol2:
+                                pay_date = st.date_input(
+                                    "Date",
+                                    key=f"pay-date-{full['id']}",
+                                )
+                            with pcol3:
+                                pay_method = st.selectbox(
+                                    "Method",
+                                    options=["EFT", "Cash", "Card", "Cheque", "Other"],
+                                    key=f"pay-method-{full['id']}",
+                                )
+                            pay_ref = st.text_input(
+                                "Reference / bank statement line",
+                                key=f"pay-ref-{full['id']}",
+                                placeholder="e.g. ABSA EFT 12345",
+                            )
+                            pay_notes = st.text_input(
+                                "Notes (optional)",
+                                key=f"pay-notes-{full['id']}",
+                            )
+                            if st.button(
+                                "Record payment",
+                                icon=":material/check:",
+                                type="primary",
+                                key=f"pay-save-{full['id']}",
+                            ):
+                                if pay_amount > 0:
+                                    invoices.record_payment(
+                                        full["id"],
+                                        amount=pay_amount,
+                                        payment_date=pay_date.strftime("%Y-%m-%d"),
+                                        method=pay_method,
+                                        reference=pay_ref or None,
+                                        notes=pay_notes or None,
+                                    )
+                                    log("payment_recorded", details={
+                                        "invoice_id": full["id"], "amount": pay_amount,
+                                        "method": pay_method,
+                                    })
+                                    st.toast(f"Payment of R {pay_amount:,.2f} recorded", icon="✅")
+                                    st.rerun()
+
+                    # Actions
+                    acol1, acol2, acol3, acol4 = st.columns(4)
+                    with acol1:
+                        # Status change
+                        new_status = st.selectbox(
+                            "Status",
+                            options=["draft", "issued", "partial", "paid", "void"],
+                            index=["draft", "issued", "partial", "paid", "void"].index(full["status"]),
+                            key=f"inv-status-{full['id']}",
+                            label_visibility="collapsed",
+                        )
+                        if new_status != full["status"]:
+                            invoices.update_invoice_status(full["id"], new_status)
+                            log("invoice_status_changed", details={
+                                "invoice_id": full["id"], "from": full["status"], "to": new_status,
+                            })
+                            st.rerun()
+                    with acol2:
+                        # PDF download
+                        try:
+                            company_data = company_profile.load_profile()
+                            pdf_bytes = render_invoice_pdf(full, company_data)
+                            st.download_button(
+                                "Tax invoice PDF",
+                                icon=":material/picture_as_pdf:",
+                                data=pdf_bytes,
+                                file_name=f"{full['invoice_no']}.pdf",
+                                mime="application/pdf",
+                                use_container_width=True,
+                                key=f"inv-pdf-{full['id']}",
+                            )
+                        except Exception as e:
+                            st.error(f"PDF render failed: {e}")
+                    with acol3:
+                        if st.button("Delete invoice", icon=":material/delete:", key=f"inv-del-{full['id']}", use_container_width=True):
+                            invoices.delete_invoice(full["id"])
+                            log("invoice_deleted", details={"invoice_id": full["id"]})
+                            st.rerun()
+
+        # Manual invoice creation
+        st.markdown("---")
+        with st.expander("Add manual invoice", icon=":material/add:"):
+            mcols = st.columns([2, 2, 1, 1])
+            with mcols[0]:
+                m_client = st.selectbox(
+                    "Client",
+                    options=[c["name"] for c in memory.list_clients()] + ["(new)"],
+                    key="man-inv-client",
+                )
+            with mcols[1]:
+                m_project = st.selectbox(
+                    "Project",
+                    options=["(none)"] + [p["name"] for p in memory.list_projects_admin()],
+                    key="man-inv-project",
+                )
+            with mcols[2]:
+                m_vat = st.number_input("VAT %", value=15.0, step=0.5, key="man-inv-vat")
+            with mcols[3]:
+                m_retention = st.number_input("Retention %", value=0.0, step=1.0, key="man-inv-ret")
+
+            m_subject = st.text_input("RE: subject", key="man-inv-subject")
+
+            st.caption("Add line items below — at least one is required.")
+            if "manual_inv_lines" not in ss:
+                ss.manual_inv_lines = []
+            ml_cols = st.columns([3, 1, 1, 1, 1])
+            with ml_cols[0]:
+                ml_desc = st.text_input("Description", key="man-inv-ld")
+            with ml_cols[1]:
+                ml_qty = st.number_input("Qty", value=1.0, step=1.0, key="man-inv-lq")
+            with ml_cols[2]:
+                ml_unit = st.text_input("Unit", value="no", key="man-inv-lu")
+            with ml_cols[3]:
+                ml_rate = st.number_input("Rate", value=0.0, step=100.0, key="man-inv-lr")
+            with ml_cols[4]:
+                if st.button("Add line", icon=":material/add:", key="man-inv-laddln", use_container_width=True):
+                    if ml_desc.strip() and ml_qty > 0:
+                        ss.manual_inv_lines.append({
+                            "description": ml_desc.strip(),
+                            "quantity": float(ml_qty),
+                            "unit": ml_unit or "no",
+                            "rate": float(ml_rate),
+                        })
+                        st.rerun()
+
+            if ss.manual_inv_lines:
+                st.markdown("**Pending lines:**")
+                for i, ln in enumerate(ss.manual_inv_lines):
+                    pcols = st.columns([5, 1])
+                    with pcols[0]:
+                        st.markdown(f"• {ln['description']} — {ln['quantity']} {ln['unit']} @ R {ln['rate']:,.2f}")
+                    with pcols[1]:
+                        if st.button("Remove", key=f"man-inv-rm-{i}"):
+                            ss.manual_inv_lines.pop(i)
+                            st.rerun()
+
+                if st.button("Create draft invoice", icon=":material/check:", type="primary", key="man-inv-create"):
+                    if m_client == "(new)" or not m_client.strip():
+                        st.error("Pick or add a client first.")
+                    else:
+                        proj_name = None if m_project == "(none)" else m_project
+                        new_id = invoices.create_invoice(
+                            client_name=m_client,
+                            project_name=proj_name,
+                            lines=ss.manual_inv_lines,
+                            vat_pct=m_vat,
+                            retention_pct=m_retention,
+                            re_subject=m_subject or None,
+                            status="draft",
+                        )
+                        ss.manual_inv_lines = []
+                        log("invoice_created_manual", details={"invoice_id": new_id, "client": m_client})
+                        st.toast(f"Draft invoice created (id {new_id})", icon="✅")
+                        st.rerun()
+
+    # ---- Aged debtors ------------------------------------------------------
+    with sub_aged:
+        st.markdown("**Aged debtors** — outstanding balances bucketed by days overdue.")
+        aged = invoices.aged_debtors()
+        if not aged:
+            st.info("No outstanding balances. 🎉")
+        else:
+            # Totals strip
+            tot_row = {
+                "current": sum(b["current"] for b in aged),
+                "b30":     sum(b["b30"] for b in aged),
+                "b60":     sum(b["b60"] for b in aged),
+                "b90":     sum(b["b90"] for b in aged),
+                "b90plus": sum(b["b90plus"] for b in aged),
+                "total":   sum(b["total"] for b in aged),
+            }
+            mc1, mc2, mc3, mc4, mc5, mc6 = st.columns(6)
+            with mc1: st.metric("Current",    f"R {tot_row['current']:,.0f}")
+            with mc2: st.metric("1–30 days",  f"R {tot_row['b30']:,.0f}")
+            with mc3: st.metric("31–60 days", f"R {tot_row['b60']:,.0f}")
+            with mc4: st.metric("61–90 days", f"R {tot_row['b90']:,.0f}")
+            with mc5: st.metric("90+ days",   f"R {tot_row['b90plus']:,.0f}")
+            with mc6: st.metric("**TOTAL**",  f"R {tot_row['total']:,.0f}")
+
+            st.markdown("---")
+            table_rows = [
+                {
+                    "Client": b["client"],
+                    "Current": f"R {b['current']:,.2f}",
+                    "1–30": f"R {b['b30']:,.2f}",
+                    "31–60": f"R {b['b60']:,.2f}",
+                    "61–90": f"R {b['b90']:,.2f}",
+                    "90+": f"R {b['b90plus']:,.2f}",
+                    "Total": f"R {b['total']:,.2f}",
+                }
+                for b in aged
+            ]
+            st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
+    # ---- Per-client statement ---------------------------------------------
+    with sub_statements:
+        st.markdown("**Account statement** — running ledger of all invoices and payments per client.")
+        stm_cols = st.columns([3, 1, 1])
+        with stm_cols[0]:
+            stm_client = st.selectbox(
+                "Client",
+                options=[c["name"] for c in memory.list_clients()],
+                key="stm-client",
+            )
+        with stm_cols[1]:
+            stm_from = st.date_input("From", value=None, key="stm-from")
+        with stm_cols[2]:
+            stm_to = st.date_input("To", value=None, key="stm-to")
+
+        if stm_client:
+            stmt = invoices.client_statement(
+                stm_client,
+                from_date=stm_from.strftime("%Y-%m-%d") if stm_from else None,
+                to_date=stm_to.strftime("%Y-%m-%d") if stm_to else None,
+            )
+            mcA, mcB, mcC = st.columns(3)
+            with mcA: st.metric("Invoiced", f"R {stmt['total_invoiced']:,.0f}")
+            with mcB: st.metric("Paid",     f"R {stmt['total_paid']:,.0f}")
+            with mcC: st.metric("Closing balance", f"R {stmt['closing_balance']:,.0f}")
+
+            if stmt["entries"]:
+                st.markdown("---")
+                ent_rows = [
+                    {
+                        "Date": e["date"],
+                        "Type": e["type"].title(),
+                        "Reference": e["ref"],
+                        "Notes": e.get("notes") or "",
+                        "Debit": f"R {e['debit']:,.2f}" if e["debit"] else "",
+                        "Credit": f"R {e['credit']:,.2f}" if e["credit"] else "",
+                        "Balance": f"R {e['balance']:,.2f}",
+                    }
+                    for e in stmt["entries"]
+                ]
+                st.dataframe(ent_rows, use_container_width=True, hide_index=True)
+
+                # Download statement PDF
+                try:
+                    company_data = company_profile.load_profile()
+                    stmt_pdf = render_statement_pdf(stmt, company_data)
+                    st.download_button(
+                        "Download statement PDF",
+                        icon=":material/picture_as_pdf:",
+                        data=stmt_pdf,
+                        file_name=f"statement-{stm_client.replace(' ', '_')}-{datetime.now().strftime('%Y%m%d')}.pdf",
+                        mime="application/pdf",
+                        use_container_width=False,
+                        type="primary",
+                    )
+                except Exception as e:
+                    st.error(f"Statement PDF render failed: {e}")
+            else:
+                st.info(f"No invoices or payments for {stm_client} in this window.")
+
+
+# ============================================================================
+# TAB 4 — CLIENTS & PROJECTS (manage the database explicitly)
 # ============================================================================
 
 with tab_admin:
