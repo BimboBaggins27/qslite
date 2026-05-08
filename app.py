@@ -534,6 +534,91 @@ _QSLITE_CSS = """
     .qs-strip-value { font-weight: 600; color: var(--ink); font-size: 0.95rem; }
 
     /* ============================================================
+       Page-level header (Xero / Zoho style)
+       ============================================================ */
+    .qs-page-header {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 18px 22px 14px 22px;
+        margin-bottom: 18px;
+        background: var(--bg-card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+    }
+    .qs-page-header__title { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+    .qs-page-header__eyebrow {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--brand);
+    }
+    .qs-page-header__h1 {
+        font-size: 1.6rem;
+        font-weight: 700;
+        line-height: 1.2;
+        letter-spacing: -0.02em;
+        color: var(--ink);
+        margin: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .qs-page-header__subtitle {
+        font-size: 0.92rem;
+        color: var(--ink-3);
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    .qs-page-header__meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    /* Compact import-options chip row */
+    .qs-import-row {
+        display: flex; gap: 10px; flex-wrap: wrap;
+        margin-bottom: 14px;
+    }
+
+    /* Large dropzone — visual focal point */
+    .qs-dropzone-shell {
+        background: var(--bg-card);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+        padding: 22px 24px;
+        margin-bottom: 14px;
+    }
+    .qs-dropzone-shell h3 {
+        font-size: 1.1rem !important;
+        font-weight: 600 !important;
+        color: var(--ink) !important;
+        margin: 0 0 4px 0 !important;
+        letter-spacing: -0.01em !important;
+    }
+    .qs-dropzone-shell p.qs-dropzone-sub {
+        color: var(--ink-3);
+        font-size: 0.88rem;
+        margin: 0 0 14px 0;
+        line-height: 1.5;
+    }
+
+    /* Mobile — collapse the page header */
+    @media (max-width: 768px) {
+        .qs-page-header { flex-direction: column; align-items: flex-start; padding: 14px 16px 12px 16px; }
+        .qs-page-header__h1 { font-size: 1.25rem; }
+        .qs-page-header__meta { width: 100%; }
+    }
+
+    /* ============================================================
        Section rhythm
        ============================================================ */
     h2, h3 { margin-top: 0.9rem !important; margin-bottom: 0.55rem !important; }
@@ -1423,9 +1508,7 @@ tab_quote, tab_past, tab_invoices, tab_admin, tab_rates, tab_audit = st.tabs(
 
 with tab_quote:
 
-    # ===== CURRENT QUOTE SUMMARY STRIP =====
-    # Always-visible banner at top of Quote Builder so you can see the current job's identity at a glance
-    # Auto-suggest a Quote No. if blank
+    # ===== PAGE HEADER (Xero / Zoho / Sage style) =====
     h = ss.quote_header
     if not (h.get("quote_no") or "").strip():
         try:
@@ -1434,21 +1517,53 @@ with tab_quote:
         except Exception:
             pass
     qno = (h.get("quote_no") or "—").strip() or "—"
-    client = (h.get("client_name") or "").strip() or "no client"
-    project = (h.get("project") or "").strip() or "no project"
-    sow = (h.get("re_subject") or "").strip() or "(scope not set — drop inputs and run)"
-    # Color the missing fields red
-    qno_html = f'<span class="qs-strip-value">{qno}</span>'
-    client_html = f'<span class="qs-strip-value">{client}</span>' if h.get("client_name") else f'<span class="qs-strip-value" style="color:#B91C1C">⚠ no client</span>'
-    project_html = f'<span class="qs-strip-value">{project}</span>' if h.get("project") else f'<span class="qs-strip-value" style="color:#B91C1C">⚠ no project</span>'
-    sow_html = f'<span class="qs-strip-value">"{sow}"</span>'
+    client = (h.get("client_name") or "").strip()
+    project = (h.get("project") or "").strip()
+    sow = (h.get("re_subject") or "").strip()
+
+    # Status pill — clear at a glance
+    if ss.frozen_quote is not None:
+        status_label, status_class = "Issued", "qs-pill-green"
+    elif ss.line_items:
+        status_label, status_class = "Draft", "qs-pill-amber"
+    elif ss.pending_items:
+        status_label, status_class = "Reviewing", "qs-pill-info"
+    else:
+        status_label, status_class = "New", "qs-pill-grey"
+
+    # Subtitle: client · project · scope (omit empties; HTML-escape free-text)
+    import html as _html
+    sub_bits = []
+    sub_bits.append(_html.escape(client) if client else '<span style="color:#B91C1C">no client</span>')
+    if project:
+        sub_bits.append(_html.escape(project))
+    elif client:
+        sub_bits.append('<span style="color:#B91C1C">no project</span>')
+    subtitle_html = " · ".join(sub_bits)
+    if sow:
+        subtitle_html += f' &nbsp;—&nbsp; <span style="font-style:italic">{_html.escape(sow)}</span>'
+
     st.markdown(
-        f'<div class="qs-strip" style="margin-bottom:14px;">'
-        f'<div class="qs-strip-cell"><span class="qs-strip-label">Quote no.</span> {qno_html}</div>'
-        f'<div class="qs-strip-cell"><span class="qs-strip-label">Client</span> {client_html}</div>'
-        f'<div class="qs-strip-cell"><span class="qs-strip-label">Project</span> {project_html}</div>'
-        f'<div class="qs-strip-cell" style="border-right:none"><span class="qs-strip-label">RE</span> {sow_html}</div>'
-        f'</div>',
+        f'''<div class="qs-page-header">
+              <div class="qs-page-header__title">
+                <div class="qs-page-header__eyebrow">QUOTATION</div>
+                <h1 class="qs-page-header__h1">{qno}</h1>
+                <div class="qs-page-header__subtitle">{subtitle_html}</div>
+              </div>
+              <div class="qs-page-header__meta">
+                <span class="qs-pill {status_class}">{status_label}</span>
+              </div>
+            </div>''',
+        unsafe_allow_html=True,
+    )
+
+    # ----- Setup section (Quote header / Inbox / Site Survey) -----
+    # Eyebrow header makes it clear these are *setup* — secondary to the upload zone below.
+    st.markdown(
+        '<div style="display:flex; align-items:baseline; gap:10px; margin: 6px 0 6px 2px;">'
+        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
+        'text-transform:uppercase; color:var(--ink-3);">SETUP &amp; OTHER WAYS TO IMPORT</span>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -1809,13 +1924,27 @@ with tab_quote:
                     })
                     _run_unified_extraction()
 
-    # ----- Single input channel — AI decides what to do -----
+    # ----- DOMINANT INPUT ZONE — the page's primary action -----
+    # Section header (Xero-style) makes the role of this card unambiguous
+    st.markdown(
+        '<div style="display:flex; align-items:baseline; gap:10px; margin: 10px 0 8px 2px;">'
+        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
+        'text-transform:uppercase; color:var(--brand);">STEP 1 · INPUTS</span>'
+        '<span style="font-size:0.85rem; color:var(--ink-3);">Drop drawings or photos — AI takes off the line items</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     with st.container(border=True):
-        st.subheader("1. Drop anything in — the AI decides what to do")
+        st.markdown(
+            '<div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">'
+            f'{ic("upload", size=22, color="#4F46E5")}'
+            '<span style="font-size:1.15rem; font-weight:600; color:var(--ink); letter-spacing:-0.01em;">'
+            'Drop drawings, photos, PDFs or video</span></div>',
+            unsafe_allow_html=True,
+        )
         st.caption(
-            "Photos, drawings, plans, PDFs, **videos** — one or many. The AI figures out whether it's a single take-off, "
-            "a comparison between drawings, or a walk-through. Videos are auto-sampled into ~8 keyframes. "
-            "If it's stuck, it asks you instead of failing."
+            "One file or many. The AI handles single take-offs, existing-vs-proposed diffs, and walk-through videos "
+            "(auto-sampled into ~8 keyframes). If it's stuck, it asks you instead of failing."
         )
         uploads = st.file_uploader(
             " ",
