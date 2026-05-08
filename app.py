@@ -168,13 +168,15 @@ st.markdown(
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     }
 
-    /* Buttons */
+    /* Buttons — 44px min height per WCAG / Apple HIG / Material */
     .stButton > button {
         border-radius: 10px !important;
         font-weight: 500;
+        min-height: 44px;
         transition: transform 0.05s ease, box-shadow 0.15s ease;
     }
     .stButton > button:hover { transform: translateY(-1px); }
+    .stDownloadButton > button { min-height: 44px; }
     .stButton > button[kind="primary"] {
         background: linear-gradient(135deg, #13B5EA 0%, #0A8CC0 100%) !important;
         border: 0 !important;
@@ -233,7 +235,7 @@ st.markdown(
         border-color: rgba(120,140,160,0.30) !important;
         min-height: 38px;
     }
-    [data-baseweb="select"] svg { color: #5C6B73; }
+    [data-baseweb="select"] svg { color: #475569; }
 
     /* The popover that opens with the options list */
     [data-baseweb="popover"] {
@@ -298,8 +300,8 @@ st.markdown(
         gap: 8px; margin-bottom: 4px;
     }
     .qs-card-title { font-weight: 600; color: #0A2540; font-size: 1.0rem; }
-    .qs-card-meta  { color: #5C6B73; font-size: 0.82rem; }
-    .qs-card-foot  { color: #5C6B73; font-size: 0.78rem; margin-top: 6px; }
+    .qs-card-meta  { color: #475569; font-size: 0.82rem; }
+    .qs-card-foot  { color: #475569; font-size: 0.78rem; margin-top: 6px; }
 
     .qs-pill {
         display: inline-block;
@@ -313,7 +315,7 @@ st.markdown(
     .qs-pill-amber   { background: rgba(245,158,11,0.14); color: #B45309; }
     .qs-pill-red     { background: rgba(239,68,68,0.12);  color: #B91C1C; }
     .qs-pill-info    { background: rgba(19,181,234,0.12); color: #0A8CC0; }
-    .qs-pill-grey    { background: rgba(120,140,160,0.14); color: #5C6B73; }
+    .qs-pill-grey    { background: rgba(120,140,160,0.14); color: #475569; }
 
     .qs-strip {
         display: flex; flex-wrap: wrap; gap: 10px;
@@ -330,7 +332,7 @@ st.markdown(
         border-right: 1px solid rgba(120,140,160,0.18);
     }
     .qs-strip-cell:last-child { border-right: none; }
-    .qs-strip-label { color: #5C6B73; font-size: 0.75rem; }
+    .qs-strip-label { color: #475569; font-size: 0.75rem; }
     .qs-strip-value { font-weight: 600; color: #0A2540; }
 
     /* ---------- Mobile (< 768px) ---------- */
