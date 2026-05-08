@@ -1712,11 +1712,16 @@ with tab_quote:
                 with lcols[1]:
                     filtered = learned if pick_trade == "(any)" else [li for li in learned if li["trade"] == pick_trade]
                     # Group label format: "Trade > Subcategory · description (R X / unit) · used N×"
-                    options = ["— none —"] + [
-                        f"[{li['trade']}{' > ' + li['subcategory'] if li.get('subcategory') else ''}] "
-                        f"{li['description'][:60]} · R {li['median_rate']:.0f}/{li['unit']} · {li['frequency']}×"
-                        for li in filtered
-                    ]
+                    def _opt(li):
+                        rate = li.get("median_rate") or li.get("last_rate") or 0
+                        sub = li.get("subcategory") or ""
+                        sub_part = f" > {sub}" if sub else ""
+                        return (
+                            f"[{li.get('trade', '')}{sub_part}] "
+                            f"{(li.get('description') or '')[:60]} "
+                            f"· R {rate:,.0f}/{li.get('unit', '')} · {li.get('frequency', 0)}×"
+                        )
+                    options = ["— none —"] + [_opt(li) for li in filtered]
                     pick_li = st.selectbox("Item", options=options, key="learned-item-pick")
                 if pick_li != "— none —" and st.button("Add this learned item", key="learned-add"):
                     idx = options.index(pick_li) - 1
