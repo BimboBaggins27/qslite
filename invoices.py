@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from memory import _conn  # reuse the shared connection helper
+from memory import _conn, transaction  # reuse the shared connection helpers
 
 
 # ----- Number formatting helpers --------------------------------------------
@@ -50,17 +50,17 @@ def _to_iso(s: str) -> str:
     return _today()
 
 
-def next_invoice_no(prefix: str = "INV") -> str:
-    """Return the next invoice number in {PREFIX}-{YYYY}-{NNNN} format.
-
-    Increments from the highest existing number this year, falls back to 0001.
-    """
+def _next_invoice_no_in_tx(con: sqlite3.Connection, prefix: str = "INV") -> str:
+    """Compute the next invoice number using the supplied connection (which
+    must already be inside a BEGIN IMMEDIATE). Caller is responsible for
+    committing — the calling INSERT and this number generation must be in the
+    same transaction so two simultaneous Convert-to-invoice clicks can't
+    produce duplicate numbers."""
     year = datetime.now().strftime("%Y")
     pattern = f"{prefix}-{year}-%"
-    with _conn() as con:
-        rows = con.execute(
-            "SELECT invoice_no FROM invoices WHERE invoice_no LIKE ?", (pattern,)
-        ).fetchall()
+    rows = con.execute(
+        "SELECT invoice_no FROM invoices WHERE invoice_no LIKE ?", (pattern,)
+    ).fetchall()
     max_n = 0
     for r in rows:
         try:
@@ -69,6 +69,14 @@ def next_invoice_no(prefix: str = "INV") -> str:
         except (ValueError, IndexError):
             continue
     return f"{prefix}-{year}-{max_n + 1:04d}"
+
+
+def next_invoice_no(prefix: str = "INV") -> str:
+    """Public read-only convenience — returns what the next invoice number
+    *would* be if generated right now. Subject to races; for actual issue use
+    `_next_invoice_no_in_tx` inside a transaction."""
+    with transaction() as con:
+        return _next_invoice_no_in_tx(con, prefix)
 
 
 # ----- Core CRUD ------------------------------------------------------------
@@ -106,7 +114,6 @@ def create_invoice(
     if not lines:
         raise ValueError("at least one line is required")
 
-    inv_no = invoice_no or next_invoice_no()
     inv_date = _to_iso(invoice_date) if invoice_date else _today()
     due = (
         (datetime.strptime(inv_date, "%Y-%m-%d") + timedelta(days=int(due_days)))
@@ -136,7 +143,10 @@ def create_invoice(
     total = round(subtotal + vat_amount - retention_amount, 2)
 
     now = datetime.utcnow().isoformat()
-    with _conn() as con:
+    # Atomic: invoice number generation + insert + line inserts must be one transaction
+    # so concurrent writers can't collide on the unique invoice_no.
+    with transaction() as con:
+        inv_no = invoice_no or _next_invoice_no_in_tx(con)
         cur = con.execute(
             """
             INSERT INTO invoices(
@@ -288,7 +298,10 @@ def update_invoice_status(invoice_id: int, status: str) -> None:
 
 
 def delete_invoice(invoice_id: int) -> None:
-    with _conn() as con:
+    # FK constraints with ON DELETE CASCADE will handle children; explicit
+    # deletes are kept as defence-in-depth for older databases that may
+    # have been created before WAL+FK enforcement was on.
+    with transaction() as con:
         con.execute("DELETE FROM payments WHERE invoice_id = ?", (invoice_id,))
         con.execute("DELETE FROM invoice_lines WHERE invoice_id = ?", (invoice_id,))
         con.execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
@@ -312,13 +325,14 @@ def record_payment(
         raise ValueError("payment amount must be positive")
     pdate = _to_iso(payment_date) if payment_date else _today()
     now = datetime.utcnow().isoformat()
-    with _conn() as con:
+    # Atomic: payment insert + status recompute must be a single transaction
+    # so a concurrent reader never sees a payment with stale invoice status.
+    with transaction() as con:
         cur = con.execute(
             "INSERT INTO payments(invoice_id, payment_date, amount, method, reference, notes, created_at) VALUES (?,?,?,?,?,?,?)",
             (invoice_id, pdate, amount, method, reference, notes, now),
         )
         payment_id = int(cur.lastrowid)
-        # Recompute status
         inv = con.execute("SELECT total FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if inv:
             paid = con.execute(
@@ -327,7 +341,7 @@ def record_payment(
             ).fetchone()
             paid_total = round(paid["p"] or 0, 2)
             balance = round(inv["total"] - paid_total, 2)
-            if balance <= 0.005:  # tolerance for float rounding
+            if balance <= 0.005:
                 new_status = "paid"
             elif paid_total > 0:
                 new_status = "partial"
@@ -347,13 +361,12 @@ def list_payments(invoice_id: int) -> list[dict]:
 
 
 def delete_payment(payment_id: int) -> None:
-    with _conn() as con:
+    with transaction() as con:
         row = con.execute("SELECT invoice_id FROM payments WHERE id = ?", (payment_id,)).fetchone()
         if not row:
             return
         invoice_id = row["invoice_id"]
         con.execute("DELETE FROM payments WHERE id = ?", (payment_id,))
-        # Recompute status
         inv = con.execute("SELECT total FROM invoices WHERE id = ?", (invoice_id,)).fetchone()
         if inv:
             paid = con.execute(

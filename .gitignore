@@ -2,6 +2,13 @@
 .env
 .streamlit/secrets.toml
 
+# Operations — runbook, audit logs, backups (host-local only, not public)
+docs/
+data/backups/
+data/auth_audit.log
+data/popia_breach.log
+data/backup-drills.log
+
 # Local databases / persistent data (regenerated)
 data/memory.sqlite
 data/memory.sqlite-journal

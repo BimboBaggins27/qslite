@@ -191,18 +191,72 @@ def _migrate(con: sqlite3.Connection) -> None:
     con.executescript(_NEW_TABLES_SQL)
 
 
+_PRAGMAS = """
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
+PRAGMA busy_timeout = 5000;
+"""
+
+
 @contextmanager
 def _conn():
+    """Default read/write connection. Auto-applies schema, migrations, and PRAGMAs.
+    Each call commits on clean exit, rolls back on exception."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=10.0)
     con.row_factory = sqlite3.Row
     try:
+        con.executescript(_PRAGMAS)
         con.executescript(SCHEMA)
         _migrate(con)
         yield con
         con.commit()
+    except Exception:
+        con.rollback()
+        raise
     finally:
         con.close()
+
+
+@contextmanager
+def transaction():
+    """Atomic write context — wraps a BEGIN IMMEDIATE so concurrent writers serialise.
+    Use this for any multi-statement write that must be all-or-nothing
+    (next_invoice_no + INSERT, record_payment + status recompute, etc.)."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(DB_PATH, timeout=10.0, isolation_level=None)
+    con.row_factory = sqlite3.Row
+    try:
+        con.executescript(_PRAGMAS)
+        con.executescript(SCHEMA)
+        _migrate(con)
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            yield con
+            con.execute("COMMIT")
+        except Exception:
+            con.execute("ROLLBACK")
+            raise
+    finally:
+        con.close()
+
+
+def backup_to(path: str | Path) -> Path:
+    """Atomic, WAL-safe DB backup using SQLite's online backup API.
+    Returns the path written to."""
+    out = Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    src = sqlite3.connect(DB_PATH, timeout=10.0)
+    try:
+        dst = sqlite3.connect(out)
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return out
 
 
 def record_rate_edit(rate_code: Optional[str], description: str, catalogue_rate: float, user_rate: float) -> None:

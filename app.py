@@ -109,43 +109,9 @@ def _embed_ios_pwa_meta() -> None:
 _embed_ios_pwa_meta()
 
 
-# ---------- Password gate ----------
-def _site_password_gate() -> None:
-    """If SITE_PASSWORD is set (env var or Streamlit secret), require it before rendering anything."""
-    expected = os.environ.get("SITE_PASSWORD", "").strip()
-    if not expected:
-        try:
-            secret_val = st.secrets.get("SITE_PASSWORD", "")
-            expected = str(secret_val).strip() if secret_val else ""
-        except Exception:
-            expected = ""
-    if not expected:
-        return  # no password configured → no gate
-    if st.session_state.get("_site_authed"):
-        return
-    st.markdown(
-        """
-        <div style="max-width:420px; margin:8vh auto 0; text-align:center;">
-          <h1 style="color:#0A2540; font-weight:700; letter-spacing:-0.02em;">🔒 QS Live</h1>
-          <p style="color:#5C6B73;">This app is password-protected.<br/>Enter the site password to continue.</p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    cols = st.columns([1, 2, 1])
-    with cols[1]:
-        pw = st.text_input("Site password", type="password", key="_site_pw_input",
-                            label_visibility="collapsed", placeholder="Site password")
-        if st.button("Unlock", icon=":material/lock_open:", type="primary", use_container_width=True):
-            if pw.strip() == expected:
-                st.session_state["_site_authed"] = True
-                st.rerun()
-            else:
-                st.error("Wrong password.")
-    st.stop()
-
-
-_site_password_gate()
+# ---------- Password gate (rate-limited, audited, identity-header-aware) ----------
+from auth import site_password_gate
+site_password_gate()
 
 # ---------- visual polish ----------
 LOGO_PATH = Path(__file__).parent / "assets" / "logo.png"
@@ -1175,41 +1141,43 @@ if DEMO_MODE:
 # Anchor for scroll-to-top floating link
 st.markdown('<div id="qs-top"></div>', unsafe_allow_html=True)
 
-# Hero header with brand mark
-hero_left, hero_right = st.columns([3, 2])
-with hero_left:
-    hero_icon_html = ic("ruler", size=28, color="#FFFFFF")
-    hero_html = f"""
-        <div class="qs-hero">
-          <h1 style="display:flex; align-items:center; gap:10px; margin:0;">
-            {hero_icon_html}<span>QS Live · Quotation Studio</span>
-          </h1>
-          <p>Drop drawings, photos or PDFs in. The AI builds your quotation. You polish, label, and issue.</p>
-        </div>
-        """
-    if LOGO_PATH.exists():
-        col_logo, col_title = st.columns([1, 4])
-        with col_logo:
-            st.image(str(LOGO_PATH), width=88)
-        with col_title:
-            st.markdown(hero_html, unsafe_allow_html=True)
-    else:
-        st.markdown(hero_html, unsafe_allow_html=True)
+# Compact app bar — replaces the old big hero. One row: brand · running total.
+# Stats (learner / flagged rates) move into the sidebar (less prime real estate).
+stats = memory.summary_stats()
+learned = stats["rate_edits"] + stats["qty_edits"]
+queue = rate_review.review_queue()
+running = quote_total(ss.line_items) if ss.line_items else 0
 
-with hero_right:
-    metrics_a, metrics_b, metrics_c = st.columns(3)
-    stats = memory.summary_stats()
-    learned = stats["rate_edits"] + stats["qty_edits"]
-    queue = rate_review.review_queue()
-    with metrics_a:
-        st.metric("Learner memory", f"{learned} edits", help=f"{stats['issued_quotes']} quote(s) issued · model is learning your overrides")
-    with metrics_b:
-        st.metric("Rates flagged", f"{len(queue)}" if queue else "0", help="Stale or drifting rates")
-    with metrics_c:
-        if ss.line_items:
-            st.metric("Running total", f"R {quote_total(ss.line_items):,.0f}")
-        else:
-            st.metric("Running total", "—")
+bar_total_html = (
+    f'<span class="qs-strip-label">Running total</span> '
+    f'<span class="qs-strip-value" style="color:#FFFFFF; font-size:1.1rem;">'
+    f'{"R " + format(running, ",.0f") if running else "—"}'
+    f"</span>"
+)
+provider_chip = providers.active_provider()
+provider_chip_html = f'<span class="qs-pill qs-pill-brand" style="background:rgba(255,255,255,0.18); color:#fff;">{provider_chip}</span>'
+
+st.markdown(
+    f"""
+    <div style="
+        display:flex; align-items:center; gap:14px;
+        padding:12px 22px;
+        margin-bottom:14px;
+        border-radius:14px;
+        background: linear-gradient(135deg, #1E1B4B 0%, #4F46E5 60%, #6D28D9 100%);
+        color:#fff;
+        box-shadow: 0 4px 16px rgba(79,70,229,0.30);
+    ">
+      <div style="display:flex; align-items:center; gap:10px; flex:1; min-width:0;">
+        {ic("ruler", size=22, color="#FFFFFF")}
+        <span style="font-weight:700; font-size:1.1rem; letter-spacing:-0.01em;">QS Live · Quotation Studio</span>
+        {provider_chip_html}
+      </div>
+      <div style="text-align:right;">{bar_total_html}</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------- sidebar: undo + zone locks ----------
 
@@ -2857,15 +2825,25 @@ with tab_invoices:
                 st.metric("Outstanding", f"R {sum(r['balance'] for r in inv_rows):,.0f}")
 
             st.markdown("---")
+            # Status → plain text label for expander title (Streamlit doesn't
+            # render HTML in expander labels). Inside each expander we show a
+            # styled qs-pill badge for visual consistency.
+            STATUS_LABEL = {
+                "draft":   "Draft",
+                "issued":  "Issued",
+                "partial": "Partial",
+                "paid":    "Paid",
+                "void":    "Void",
+            }
+            STATUS_PILL_CLASS = {
+                "draft":   "qs-pill-grey",
+                "issued":  "qs-pill-info",
+                "partial": "qs-pill-amber",
+                "paid":    "qs-pill-green",
+                "void":    "qs-pill-grey",
+            }
             for inv in inv_rows:
-                status_pill = {
-                    "draft":   "⚪ Draft",
-                    "issued":  "🔵 Issued",
-                    "partial": "🟡 Partial",
-                    "paid":    "🟢 Paid",
-                    "void":    "⚫ Void",
-                }.get(inv["status"], inv["status"])
-                title = f"{inv['invoice_no']} · {inv['client_name']} · R {inv['total']:,.2f} · {status_pill}"
+                title = f"{inv['invoice_no']} · {inv['client_name']} · R {inv['total']:,.2f} · {STATUS_LABEL.get(inv['status'], inv['status'])}"
                 if inv["balance"] > 0:
                     title += f" · balance R {inv['balance']:,.2f}"
                 with st.expander(title, expanded=False):
@@ -2873,7 +2851,13 @@ with tab_invoices:
                     if not full:
                         st.error("Invoice missing.")
                         continue
-                    # Header info
+                    # Header info + styled status pill
+                    pill_class = STATUS_PILL_CLASS.get(full["status"], "qs-pill-grey")
+                    pill_label = STATUS_LABEL.get(full["status"], full["status"])
+                    st.markdown(
+                        f'<span class="qs-pill {pill_class}">{pill_label}</span>',
+                        unsafe_allow_html=True,
+                    )
                     cols = st.columns([2, 2, 2])
                     with cols[0]:
                         st.markdown(f"**Date:** {full['invoice_date']}")
@@ -2888,7 +2872,12 @@ with tab_invoices:
                         st.markdown(f"**Total:** R {full['total']:,.2f}")
                     with cols[2]:
                         st.markdown(f"**Paid:** R {full['paid_total']:,.2f}")
-                        st.markdown(f"**Balance:** R {full['balance']:,.2f}")
+                        balance_color = "#DC2626" if full['balance'] > 0.005 else "#16A34A"
+                        st.markdown(
+                            f'<span style="font-size:1.05rem; font-weight:600;">Balance: '
+                            f'<span style="color:{balance_color}">R {full["balance"]:,.2f}</span></span>',
+                            unsafe_allow_html=True,
+                        )
 
                     # Line items
                     if full["lines"]:
@@ -2919,60 +2908,57 @@ with tab_invoices:
                                     log("payment_deleted", details={"payment_id": p["id"], "invoice_id": full["id"]})
                                     st.rerun()
 
-                    # Record payment
+                    # Inline "Record payment" — no nested expander, three taps to log a payment
                     if full["balance"] > 0.005:
-                        with st.expander("Record payment", icon=":material/payments:"):
-                            pcol1, pcol2, pcol3 = st.columns([1, 1, 2])
-                            with pcol1:
-                                pay_amount = st.number_input(
-                                    "Amount",
-                                    min_value=0.0,
-                                    max_value=float(full["balance"]),
-                                    value=float(full["balance"]),
-                                    step=100.0,
-                                    key=f"pay-amt-{full['id']}",
-                                )
-                            with pcol2:
-                                pay_date = st.date_input(
-                                    "Date",
-                                    key=f"pay-date-{full['id']}",
-                                )
-                            with pcol3:
-                                pay_method = st.selectbox(
-                                    "Method",
-                                    options=["EFT", "Cash", "Card", "Cheque", "Other"],
-                                    key=f"pay-method-{full['id']}",
-                                )
-                            pay_ref = st.text_input(
-                                "Reference / bank statement line",
-                                key=f"pay-ref-{full['id']}",
-                                placeholder="e.g. ABSA EFT 12345",
+                        st.markdown('<div class="qs-divider"></div>', unsafe_allow_html=True)
+                        st.markdown("**Record payment**")
+                        pcol1, pcol2, pcol3, pcol4 = st.columns([1.2, 1, 1.2, 1])
+                        with pcol1:
+                            pay_amount = st.number_input(
+                                "Amount",
+                                min_value=0.0,
+                                max_value=float(full["balance"]),
+                                value=float(full["balance"]),
+                                step=100.0,
+                                key=f"pay-amt-{full['id']}",
                             )
-                            pay_notes = st.text_input(
-                                "Notes (optional)",
-                                key=f"pay-notes-{full['id']}",
+                        with pcol2:
+                            pay_date = st.date_input("Date", key=f"pay-date-{full['id']}")
+                        with pcol3:
+                            pay_method = st.selectbox(
+                                "Method",
+                                options=["EFT", "Cash", "Card", "Cheque", "Other"],
+                                key=f"pay-method-{full['id']}",
                             )
-                            if st.button(
-                                "Record payment",
-                                icon=":material/check:",
+                        with pcol4:
+                            st.markdown("&nbsp;", unsafe_allow_html=True)  # vertical alignment
+                            save_clicked = st.button(
+                                "Save", icon=":material/check:",
                                 type="primary",
                                 key=f"pay-save-{full['id']}",
-                            ):
-                                if pay_amount > 0:
-                                    invoices.record_payment(
-                                        full["id"],
-                                        amount=pay_amount,
-                                        payment_date=pay_date.strftime("%Y-%m-%d"),
-                                        method=pay_method,
-                                        reference=pay_ref or None,
-                                        notes=pay_notes or None,
-                                    )
-                                    log("payment_recorded", details={
-                                        "invoice_id": full["id"], "amount": pay_amount,
-                                        "method": pay_method,
-                                    })
-                                    st.toast(f"Payment of R {pay_amount:,.2f} recorded", icon="✅")
-                                    st.rerun()
+                                use_container_width=True,
+                            )
+                        pay_ref = st.text_input(
+                            "Reference / bank statement line (optional)",
+                            key=f"pay-ref-{full['id']}",
+                            placeholder="e.g. ABSA EFT 12345",
+                        )
+                        if save_clicked:
+                            if pay_amount > 0:
+                                invoices.record_payment(
+                                    full["id"],
+                                    amount=pay_amount,
+                                    payment_date=pay_date.strftime("%Y-%m-%d"),
+                                    method=pay_method,
+                                    reference=pay_ref or None,
+                                )
+                                log("payment_recorded", details={
+                                    "invoice_id": full["id"],
+                                    "amount": pay_amount,
+                                    "method": pay_method,
+                                })
+                                st.toast(f"Payment of R {pay_amount:,.2f} recorded", icon="✅")
+                                st.rerun()
 
                     # Actions
                     acol1, acol2, acol3, acol4 = st.columns(4)
@@ -3641,17 +3627,8 @@ with tab_rates:
 # ============================================================================
 
 with tab_audit:
-    st.subheader("Audit log")
-    st.caption("Every quantity/rate change, confirmation, lock, undo, and issue. Persisted for the session.")
-    if not ss.audit_log:
-        st.info("No audit entries yet.")
-    else:
-        for e in reversed(ss.audit_log):
-            ts = e["ts"]
-            action = e["action"]
-            iid = e.get("item_id") or ""
-            details = e.get("details") or {}
-            st.code(f"{ts}  {action:<22} {iid:<10} {json.dumps(details, default=str)}", language=None)
+    from ui import tab_audit as _tab_audit_module
+    _tab_audit_module.render(ss)
 
 
 # Floating scroll-to-top — desktop only
