@@ -1185,10 +1185,11 @@ with st.sidebar:
     st.subheader("LLM provider")
     current_provider = providers.active_provider()
     PROVIDER_LABELS = {
-        "ollama":    "Ollama (local Llama 3.2 Vision) — free, on this machine",
-        "groq":      "Groq cloud (Llama 3.2 90B Vision) — free tier",
-        "anthropic": "Anthropic (Claude Sonnet 4.5) — paid",
-        "grok":      "xAI Grok (grok-2-vision) — paid",
+        "ollama":     "Ollama (local Llama 3.2 Vision) — free, on this machine",
+        "cloudflare": "Cloudflare Workers AI — free, 10k neurons/day",
+        "groq":       "Groq cloud (Llama 3.2 90B Vision) — free tier, fast",
+        "anthropic":  "Anthropic (Claude Sonnet 4.5) — paid, best quality",
+        "grok":       "xAI Grok (grok-2-vision) — paid",
     }
     options = list(PROVIDER_LABELS.keys())
     provider_choice = st.radio(
@@ -1224,6 +1225,10 @@ with st.sidebar:
         key_label = "xAI (Grok) API key"
         key_help = "Get one at console.x.ai → API keys. Starts with xai-…"
         key_prefix = "xai-"
+    elif current_provider == "cloudflare":
+        key_label = "Cloudflare API token (CF_API_TOKEN)"
+        key_help = "dash.cloudflare.com → My Profile → API Tokens → Create Token (Workers AI scope). Starts with cfut_…"
+        key_prefix = "cfut_"
     else:  # groq
         key_label = "Groq API key"
         key_help = "Get one at console.groq.com/keys (free tier). Starts with gsk_…"
@@ -1281,6 +1286,87 @@ with st.sidebar:
             ss.key_input_seq += 1
             log("clear_api_key", details={"provider": current_provider})
             st.rerun()
+
+    # Cloudflare needs a second piece — Account ID — alongside the token
+    if current_provider == "cloudflare":
+        cf_acct = os.environ.get("CF_ACCOUNT_ID", "").strip()
+        if not cf_acct:
+            try:
+                cf_acct = str(st.secrets.get("CF_ACCOUNT_ID", "")).strip()
+            except Exception:
+                cf_acct = ""
+        st.markdown("**Cloudflare Account ID**")
+        if cf_acct:
+            st.success(f"✓ Account ID set ({cf_acct[:6]}…{cf_acct[-4:]})")
+        else:
+            st.info(
+                "Find on dash.cloudflare.com (right side of the homepage) — 32-char hex. "
+                "Paste here and click Save."
+            )
+        new_acct = st.text_input(
+            "CF_ACCOUNT_ID",
+            value=cf_acct,
+            key=f"cf-acct-{ss.key_input_seq}",
+            help="32-character hex account ID, visible on the right side of dash.cloudflare.com after login.",
+        )
+        if new_acct.strip() and new_acct.strip() != cf_acct:
+            os.environ["CF_ACCOUNT_ID"] = new_acct.strip()
+            # Persist to .env (next to ANTHROPIC_API_KEY etc)
+            from pathlib import Path as _P
+            env_path = _P(__file__).parent / ".env"
+            try:
+                lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+                replaced = False
+                for i, ln in enumerate(lines):
+                    if ln.startswith("CF_ACCOUNT_ID="):
+                        lines[i] = f"CF_ACCOUNT_ID={new_acct.strip()}"
+                        replaced = True
+                        break
+                if not replaced:
+                    lines.append(f"CF_ACCOUNT_ID={new_acct.strip()}")
+                env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                st.toast("✓ Account ID saved to .env", icon="✅")
+                log("cf_account_id_saved")
+                st.rerun()
+            except Exception as _e:
+                st.error(f"Could not write .env: {_e}")
+
+    # ---------- Diagnostic: which secrets actually loaded ----------
+    with st.expander("⚙️ Secrets diagnostic", expanded=False):
+        diag_rows = []
+        secrets_to_check = [
+            "ANTHROPIC_API_KEY", "GROQ_API_KEY", "XAI_API_KEY",
+            "CF_API_TOKEN", "CF_ACCOUNT_ID",
+            "EXTRACTION_PROVIDER", "SITE_PASSWORD", "OLLAMA_URL",
+        ]
+        for name in secrets_to_check:
+            val_env = os.environ.get(name, "")
+            val_secret = ""
+            try:
+                val_secret = str(st.secrets.get(name, ""))
+            except Exception:
+                val_secret = ""
+            if val_env:
+                origin, val = "env", val_env
+            elif val_secret:
+                origin, val = "st.secrets", val_secret
+            else:
+                origin, val = "—", ""
+            if val and name in ("EXTRACTION_PROVIDER", "OLLAMA_URL"):
+                shown = val
+            elif val and len(val) > 12:
+                shown = f"{val[:6]}…{val[-4:]}  ({len(val)} chars)"
+            elif val:
+                shown = f"({len(val)} chars)"
+            else:
+                shown = "(not set)"
+            diag_rows.append({"Secret": name, "Origin": origin, "Value": shown})
+        st.dataframe(diag_rows, hide_index=True, use_container_width=True)
+        st.caption(
+            "Origin shows where the value was read from. If a secret is `(not set)` "
+            "but you expected it, check Streamlit Cloud → Settings → Secrets, then "
+            "wait 30s and refresh."
+        )
 
     st.divider()
     st.subheader("Work folder")
