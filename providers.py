@@ -1,15 +1,16 @@
 """LLM provider abstraction.
 
-QSLite started Anthropic-only. This module routes the same calls to either
-Anthropic (Claude), xAI (Grok), or Groq (Llama on LPUs) via their respective
-endpoints without rewriting extract.py and voice_edits.py.
+QSLite started Anthropic-only. This module routes the same calls to:
+Anthropic (Claude), xAI (Grok), Groq (cloud Llama on LPUs), or local
+Ollama — all via the same call surface.
 
-Three providers:
-  - "anthropic" — Claude Sonnet/Haiku via native SDK
+Four providers:
+  - "anthropic" — Claude Sonnet/Haiku via native SDK (paid)
   - "grok"      — xAI Grok via OpenAI SDK at api.x.ai/v1 (paid)
-  - "groq"      — Groq (Llama / Mixtral on LPUs) via OpenAI SDK at
-                  api.groq.com/openai/v1. Has a real free tier with
-                  rate limits.
+  - "groq"      — Groq (cloud, OpenAI-compat) at api.groq.com (free tier)
+  - "ollama"    — LOCAL Ollama at http://localhost:11434/v1, OpenAI-compat.
+                  Zero cost, runs on the host machine, vision quality
+                  depends on which Llama variant you've pulled.
 
 Provider is chosen by `EXTRACTION_PROVIDER` env var (or st.secrets) at call
 time. Models are overridable via:
@@ -19,6 +20,9 @@ time. Models are overridable via:
   - GROK_TEXT_MODEL         (default: grok-3-mini)
   - GROQ_VISION_MODEL       (default: llama-3.2-90b-vision-preview)
   - GROQ_TEXT_MODEL         (default: llama-3.3-70b-versatile)
+  - OLLAMA_VISION_MODEL     (default: llama3.2-vision:11b)
+  - OLLAMA_TEXT_MODEL       (default: llama3.2:3b)
+  - OLLAMA_URL              (default: http://localhost:11434/v1)
 
 Public surface:
   - active_provider() -> "anthropic" | "grok" | "groq"
@@ -56,21 +60,31 @@ def _read_env_or_secret(*keys: str) -> Optional[str]:
 
 
 def active_provider() -> str:
-    """Return 'anthropic' | 'grok' | 'groq'. Defaults to 'anthropic'."""
+    """Return 'anthropic' | 'grok' | 'groq' | 'ollama'. Defaults to 'anthropic'."""
     p = (_read_env_or_secret("EXTRACTION_PROVIDER", "QSLITE_PROVIDER") or "anthropic").strip().lower()
     if p in ("grok", "xai"):
         return "grok"
-    if p in ("groq", "llama"):
+    if p in ("groq", "llama"):  # Groq cloud
         return "groq"
+    if p in ("ollama", "local"):
+        return "ollama"
     return "anthropic"
 
 
 def has_provider_key(provider: Optional[str] = None) -> bool:
+    """Whether the active provider is configured to actually call out.
+
+    Ollama is local — no API key, but treated as 'has key' if the daemon is
+    presumed reachable (we don't ping it here to avoid blocking the UI on
+    every render; first call will surface a clear error if it's down).
+    """
     p = provider or active_provider()
     if p == "grok":
         return bool(_read_env_or_secret("XAI_API_KEY", "GROK_API_KEY"))
     if p == "groq":
         return bool(_read_env_or_secret("GROQ_API_KEY"))
+    if p == "ollama":
+        return True  # local; first call surfaces real errors
     return bool(_read_env_or_secret("ANTHROPIC_API_KEY"))
 
 
@@ -84,6 +98,10 @@ def model_for(kind: str, provider: Optional[str] = None) -> str:
         if kind == "vision":
             return _read_env_or_secret("GROQ_VISION_MODEL") or "llama-3.2-90b-vision-preview"
         return _read_env_or_secret("GROQ_TEXT_MODEL") or "llama-3.3-70b-versatile"
+    if p == "ollama":
+        if kind == "vision":
+            return _read_env_or_secret("OLLAMA_VISION_MODEL") or "llama3.2-vision:11b"
+        return _read_env_or_secret("OLLAMA_TEXT_MODEL") or "llama3.2:3b"
     if kind == "vision":
         return _read_env_or_secret("ANTHROPIC_VISION_MODEL") or "claude-sonnet-4-5"
     return _read_env_or_secret("ANTHROPIC_TEXT_MODEL") or "claude-haiku-4-5-20251001"
@@ -218,6 +236,12 @@ _OPENAI_COMPAT_CONFIG = {
         "key_names": ("GROQ_API_KEY",),
         "label": "Groq",
     },
+    "ollama": {
+        # base_url overridden at call time via OLLAMA_URL env var
+        "base_url": "http://localhost:11434/v1",
+        "key_names": (),  # local, no key
+        "label": "Ollama (local)",
+    },
 }
 
 
@@ -231,10 +255,16 @@ def _openai_compat_client(provider: str):
         raise RuntimeError(
             f"{cfg['label']} provider requires `openai` package. Add openai>=1.0 to requirements.txt."
         ) from e
-    api_key = _read_env_or_secret(*cfg["key_names"])
+    base_url = cfg["base_url"]
+    if provider == "ollama":
+        base_url = (_read_env_or_secret("OLLAMA_URL") or base_url).rstrip("/")
+        # Ollama doesn't validate the key but the OpenAI client requires one.
+        return OpenAI(api_key="ollama", base_url=base_url)
+    api_key = _read_env_or_secret(*cfg["key_names"]) if cfg["key_names"] else None
     if not api_key:
-        raise RuntimeError(f"{cfg['key_names'][0]} not set. Add it via the sidebar or .env.")
-    return OpenAI(api_key=api_key, base_url=cfg["base_url"])
+        first = cfg["key_names"][0] if cfg["key_names"] else "(none)"
+        raise RuntimeError(f"{first} not set. Add it via the sidebar or .env.")
+    return OpenAI(api_key=api_key, base_url=base_url)
 
 
 def _openai_compat_call_with_tools(
@@ -321,7 +351,7 @@ def call_with_tools(
     max_tokens: int = 8192,
 ) -> ToolCallResult:
     p = active_provider()
-    if p in ("grok", "groq"):
+    if p in ("grok", "groq", "ollama"):
         return _openai_compat_call_with_tools(p, messages, system, tools, tool_choice, kind, max_tokens)
     return _anthropic_call_with_tools(messages, system, tools, tool_choice, kind, max_tokens)
 
@@ -333,6 +363,6 @@ def call_text(
     max_tokens: int = 2048,
 ) -> str:
     p = active_provider()
-    if p in ("grok", "groq"):
+    if p in ("grok", "groq", "ollama"):
         return _openai_compat_call_text(p, messages, system, kind, max_tokens)
     return _anthropic_call_text(messages, system, kind, max_tokens)

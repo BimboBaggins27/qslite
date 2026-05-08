@@ -1185,9 +1185,10 @@ with st.sidebar:
     st.subheader("LLM provider")
     current_provider = providers.active_provider()
     PROVIDER_LABELS = {
+        "ollama":    "Ollama (local Llama 3.2 Vision) — free, on this machine",
+        "groq":      "Groq cloud (Llama 3.2 90B Vision) — free tier",
         "anthropic": "Anthropic (Claude Sonnet 4.5) — paid",
         "grok":      "xAI Grok (grok-2-vision) — paid",
-        "groq":      "Groq (Llama 3.2 90B Vision) — free tier",
     }
     options = list(PROVIDER_LABELS.keys())
     provider_choice = st.radio(
@@ -1205,8 +1206,17 @@ with st.sidebar:
         st.rerun()
     current_provider = provider_choice
 
-    # Per-provider key block
-    if current_provider == "anthropic":
+    # Per-provider key block (or "no key needed" for ollama)
+    if current_provider == "ollama":
+        st.success("✓ No API key needed — Ollama runs on this machine. "
+                   "Make sure `ollama serve` is running and the vision model is pulled "
+                   "(`ollama pull llama3.2-vision:11b`).")
+        ss._site_authed = True  # placeholder, gate handled separately
+        st.divider()
+        st.subheader("Work folder")
+        # fall through to next sidebar block via the divider below
+        key_label = key_help = key_prefix = None
+    elif current_provider == "anthropic":
         key_label = "Anthropic API key"
         key_help = "Get one at console.anthropic.com → API keys. Starts with sk-ant-…"
         key_prefix = "sk-ant-"
@@ -1219,19 +1229,21 @@ with st.sidebar:
         key_help = "Get one at console.groq.com/keys (free tier). Starts with gsk_…"
         key_prefix = "gsk_"
 
-    st.markdown(f"**{key_label}**")
-    if key_manager.has_api_key(current_provider):
-        masked = key_manager.get_api_key(current_provider)
-        st.success(f"✓ Key set ({masked[:8]}…{masked[-4:]}, {len(masked)} chars)")
-        if st.button("Change / clear key", icon=":material/key:", use_container_width=True, key=f"chg-{current_provider}"):
+    # Ollama needs no key — skip the entire key-management block
+    if key_label is not None:
+        st.markdown(f"**{key_label}**")
+        if key_manager.has_api_key(current_provider):
+            masked = key_manager.get_api_key(current_provider)
+            st.success(f"✓ Key set ({masked[:8]}…{masked[-4:]}, {len(masked)} chars)")
+            if st.button("Change / clear key", icon=":material/key:", use_container_width=True, key=f"chg-{current_provider}"):
+                ss.show_key_input = True
+                ss.key_input_seq += 1
+                st.rerun()
+        else:
+            st.info(f"Paste your {current_provider} key below. Saved to qs-app/.env so you only do this once.")
             ss.show_key_input = True
-            ss.key_input_seq += 1
-            st.rerun()
-    else:
-        st.info(f"Paste your {current_provider} key below. Saved to qs-app/.env so you only do this once.")
-        ss.show_key_input = True
 
-    if ss.get("show_key_input"):
+    if key_label is not None and ss.get("show_key_input"):
         widget_key = f"key-input-{current_provider}-{ss.key_input_seq}"
         typed = st.text_input(
             f"{key_label} — paste, verify, then click Save",

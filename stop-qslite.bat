@@ -1,6 +1,7 @@
 @echo off
-REM Stop QSLite — kills both Streamlit and the Cloudflare tunnel.
+REM Stop QSLite — kills both Streamlit and the ngrok tunnel.
 echo Stopping QSLite...
+taskkill /F /IM ngrok.exe 2>nul
 taskkill /F /IM cloudflared.exe 2>nul
 taskkill /F /FI "WINDOWTITLE eq QSLite Streamlit*" 2>nul
 taskkill /F /FI "WINDOWTITLE eq QSLite Tunnel*" 2>nul

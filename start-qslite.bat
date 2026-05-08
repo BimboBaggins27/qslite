@@ -1,15 +1,17 @@
 @echo off
-REM Start QSLite locally + open a Cloudflare tunnel so it's reachable from anywhere.
-REM Drop a shortcut to this file in shell:startup if you want it to launch on boot.
+REM Start QSLite locally + open the stable ngrok tunnel.
+REM Tunnel URL never changes: https://laxative-confining-eskimo.ngrok-free.dev
+REM Bookmark that URL on your iPad. Site password lives in agent-brain credentials.
 
 setlocal
 set QSDIR=C:\Users\Ruan\.craft-agent\workspaces\ru1\sessions\260501-neat-marble\qs-app
 set LOGDIR=%USERPROFILE%\.qslite-logs
+set NGROK_DOMAIN=laxative-confining-eskimo.ngrok-free.dev
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 cd /d "%QSDIR%"
 
 echo ================================================================
-echo  QSLite — booting Streamlit + Cloudflare tunnel
+echo  QSLite — booting Streamlit + ngrok tunnel
 echo ================================================================
 
 REM 1) Streamlit on port 8520, headless, logs to %LOGDIR%\streamlit.log
@@ -33,23 +35,28 @@ goto :continue_tunnel
 echo  - Streamlit is listening on http://localhost:8520
 
 :continue_tunnel
-REM 2) Cloudflare quick tunnel (random URL, free, no signup)
+REM 2) Ngrok with reserved static domain (URL never changes)
 del "%LOGDIR%\tunnel.log" 2>nul
-start "QSLite Tunnel" /MIN cmd /c ""C:\Program Files (x86)\cloudflared\cloudflared.exe" tunnel --url http://localhost:8520 --no-autoupdate > %LOGDIR%\tunnel.log 2>&1"
+start "QSLite Tunnel" /MIN cmd /c "ngrok http --domain=%NGROK_DOMAIN% 8520 --log=stdout --log-format=logfmt > %LOGDIR%\tunnel.log 2>&1"
 
 echo  - Tunnel launching... (logs: %LOGDIR%\tunnel.log)
 
-REM Wait for the trycloudflare.com URL to appear in the log
+REM Wait for the started tunnel line to appear
 set /a tries=0
 :waittunnel
-findstr "trycloudflare.com" "%LOGDIR%\tunnel.log" >nul 2>&1
+findstr "started tunnel" "%LOGDIR%\tunnel.log" >nul 2>&1
 if %errorlevel%==0 goto tunnel_ready
+findstr "ERROR" "%LOGDIR%\tunnel.log" >nul 2>&1
+if %errorlevel%==0 goto tunnel_failed
 set /a tries+=1
 if %tries% geq 15 goto tunnel_timeout
 timeout /t 2 /nobreak >nul
 goto waittunnel
 :tunnel_timeout
 echo  - WARN: Tunnel didn't come up in 30s. Check %LOGDIR%\tunnel.log
+goto :show
+:tunnel_failed
+echo  - ERROR: ngrok startup failed. Check %LOGDIR%\tunnel.log
 goto :show
 :tunnel_ready
 echo  - Tunnel is up
@@ -60,16 +67,14 @@ echo ================================================================
 echo  QSLite is running.
 echo ================================================================
 echo  Local URL:    http://localhost:8520
+echo  Public URL:   https://%NGROK_DOMAIN%
+echo  (Bookmark the public URL on iPad — it never changes.)
 echo.
-echo  Public URL (write this on your iPad):
-findstr /R "https://[a-z0-9-]*\.trycloudflare\.com" "%LOGDIR%\tunnel.log"
-echo.
-echo  Site password: RU1
+echo  Site password: see agent-brain\99-meta\credentials.md
 echo  Logs:          %LOGDIR%
 echo ================================================================
 echo.
-echo  This window can be closed — both processes keep running in the
-echo  background (look in Task Manager for "streamlit" and
-echo  "cloudflared" if you ever need to stop them).
+echo  Both processes keep running in the background. Use stop-qslite.bat
+echo  to terminate them.
 echo.
 pause
