@@ -1194,7 +1194,7 @@ with tab_quote:
 
     # ----- Site Survey (foreman template upload) -----
     with st.expander("Site Survey — download blank template / import filled-in survey",
-                       expanded=False, icon=":material/clipboard:"):
+                       expanded=False, icon=":material/content_paste:"):
         col_dl, col_info = st.columns([1, 3])
         with col_dl:
             st.download_button(
