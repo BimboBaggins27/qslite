@@ -1,4 +1,4 @@
-"""Set/get LLM API keys (Anthropic + xAI Grok) without making the user touch a file.
+"""Set/get LLM API keys (Anthropic + xAI Grok + Groq) without making the user touch a file.
 
 Saves to .env so keys persist across server restarts, and to the current
 process environment so they're picked up on the very next request.
@@ -14,6 +14,7 @@ ENV_PATH = Path(__file__).parent / ".env"
 KNOWN_KEYS = {
     "anthropic": ("ANTHROPIC_API_KEY", []),
     "grok":      ("XAI_API_KEY", ["GROK_API_KEY"]),
+    "groq":      ("GROQ_API_KEY", []),
 }
 
 
@@ -79,7 +80,7 @@ def clear_api_key(provider: str = "anthropic") -> None:
 def save_provider_choice(provider: str) -> None:
     """Persist EXTRACTION_PROVIDER selection in .env + process env."""
     provider = (provider or "anthropic").strip().lower()
-    if provider not in ("anthropic", "grok"):
+    if provider not in ("anthropic", "grok", "groq"):
         provider = "anthropic"
     os.environ["EXTRACTION_PROVIDER"] = provider
     line = f"EXTRACTION_PROVIDER={provider}"

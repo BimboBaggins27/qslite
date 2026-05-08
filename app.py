@@ -919,7 +919,7 @@ DEMO_MODE = not providers.has_provider_key()
 
 if DEMO_MODE:
     _active = providers.active_provider()
-    _label = "Anthropic" if _active == "anthropic" else "xAI Grok"
+    _label = {"anthropic": "Anthropic", "grok": "xAI Grok", "groq": "Groq"}.get(_active, _active)
     st.warning(
         f"🧪  **DEMO MODE** — no {_label} API key set, so extractions return deterministic synthetic data marked `[DEMO]`. "
         "Every other feature works (review, edit, learner, locks, Excel export). Add a key in the sidebar to enable real vision extraction."
@@ -969,11 +969,17 @@ with hero_right:
 with st.sidebar:
     st.subheader("LLM provider")
     current_provider = providers.active_provider()
+    PROVIDER_LABELS = {
+        "anthropic": "Anthropic (Claude Sonnet 4.5) — paid",
+        "grok":      "xAI Grok (grok-2-vision) — paid",
+        "groq":      "Groq (Llama 3.2 90B Vision) — free tier",
+    }
+    options = list(PROVIDER_LABELS.keys())
     provider_choice = st.radio(
         "Provider",
-        options=["anthropic", "grok"],
-        index=["anthropic", "grok"].index(current_provider),
-        format_func=lambda p: "Anthropic (Claude Sonnet 4.5)" if p == "anthropic" else "xAI (Grok)",
+        options=options,
+        index=options.index(current_provider),
+        format_func=lambda p: PROVIDER_LABELS[p],
         horizontal=False,
         label_visibility="collapsed",
         key="provider-radio",
@@ -989,10 +995,14 @@ with st.sidebar:
         key_label = "Anthropic API key"
         key_help = "Get one at console.anthropic.com → API keys. Starts with sk-ant-…"
         key_prefix = "sk-ant-"
-    else:
+    elif current_provider == "grok":
         key_label = "xAI (Grok) API key"
         key_help = "Get one at console.x.ai → API keys. Starts with xai-…"
         key_prefix = "xai-"
+    else:  # groq
+        key_label = "Groq API key"
+        key_help = "Get one at console.groq.com/keys (free tier). Starts with gsk_…"
+        key_prefix = "gsk_"
 
     st.markdown(f"**{key_label}**")
     if key_manager.has_api_key(current_provider):
