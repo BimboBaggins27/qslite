@@ -22,7 +22,7 @@ time. Models are overridable via:
   - ANTHROPIC_TEXT_MODEL    (default: claude-haiku-4-5-20251001)
   - GROK_VISION_MODEL       (default: grok-2-vision-1212)
   - GROK_TEXT_MODEL         (default: grok-3-mini)
-  - GROQ_VISION_MODEL       (default: llama-3.2-90b-vision-preview)
+  - GROQ_VISION_MODEL       (default: meta-llama/llama-4-scout-17b-16e-instruct)
   - GROQ_TEXT_MODEL         (default: llama-3.3-70b-versatile)
   - GEMINI_VISION_MODEL     (default: gemini-2.5-flash)
   - GEMINI_TEXT_MODEL       (default: gemini-2.5-flash)
@@ -101,7 +101,7 @@ def model_for(kind: str, provider: Optional[str] = None) -> str:
         return _read_env_or_secret("GROK_TEXT_MODEL") or "grok-3-mini"
     if p == "groq":
         if kind == "vision":
-            return _read_env_or_secret("GROQ_VISION_MODEL") or "llama-3.2-90b-vision-preview"
+            return _read_env_or_secret("GROQ_VISION_MODEL") or "meta-llama/llama-4-scout-17b-16e-instruct"
         return _read_env_or_secret("GROQ_TEXT_MODEL") or "llama-3.3-70b-versatile"
     if p == "gemini":
         if kind == "vision":
