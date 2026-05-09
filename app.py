@@ -1557,12 +1557,186 @@ with tab_quote:
         unsafe_allow_html=True,
     )
 
-    # ----- Setup section (Quote header / Inbox / Site Survey) -----
-    # Eyebrow header makes it clear these are *setup* — secondary to the upload zone below.
+    # ----- DOMINANT INPUT ZONE — page's primary action, immediately under header
     st.markdown(
-        '<div style="display:flex; align-items:baseline; gap:10px; margin: 6px 0 6px 2px;">'
+        '<div style="display:flex; align-items:center; justify-content:space-between; '
+        'gap:10px; margin: 14px 0 10px 2px;">'
+        '<div style="display:flex; align-items:baseline; gap:10px;">'
         '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
-        'text-transform:uppercase; color:var(--ink-3);">SETUP &amp; OTHER WAYS TO IMPORT</span>'
+        'text-transform:uppercase; color:var(--brand);">START HERE</span>'
+        '<span style="font-size:0.92rem; color:var(--ink-2); font-weight:500;">'
+        'Drop your drawings — AI takes off the line items</span>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    # Big purple-tinted dropzone card — the visual anchor of the whole page
+    st.markdown(
+        '<div style="background: linear-gradient(135deg, #FAFBFF 0%, #F5F3FF 100%); '
+        'border: 2px dashed rgba(79,70,229,0.30); border-radius: 16px; '
+        'padding: 22px 24px 8px 24px; margin-bottom: 4px;">',
+        unsafe_allow_html=True,
+    )
+    with st.container(border=False):
+        st.markdown(
+            '<div style="display:flex; align-items:center; gap:14px; margin-bottom:8px;">'
+            '<div style="width:44px; height:44px; border-radius:12px; '
+            'background: linear-gradient(135deg, #4F46E5 0%, #7C3AED 100%); '
+            'display:flex; align-items:center; justify-content:center; '
+            'box-shadow: 0 6px 16px rgba(79,70,229,0.30);">'
+            f'{ic("upload", size=22, color="#FFFFFF")}'
+            '</div>'
+            '<div>'
+            '<div style="font-size:1.18rem; font-weight:700; color:var(--ink); letter-spacing:-0.01em;">'
+            'Drop drawings, photos, PDFs or video</div>'
+            '<div style="font-size:0.85rem; color:var(--ink-3); margin-top:2px;">'
+            'One file or many. PDFs auto-paginate. Videos are sampled into ~8 keyframes.'
+            '</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        uploads = st.file_uploader(
+            " ",
+            type=["png", "jpg", "jpeg", "webp", "pdf", "mp4", "mov", "webm", "m4v"],
+            accept_multiple_files=True,
+            key="uploader",
+            label_visibility="collapsed",
+        )
+        # ----- Voice → text dictation (iOS Safari, Chrome, Edge supported) -----
+        if _stt is not None:
+            mic_col, hint_col = st.columns([1, 4])
+            with mic_col:
+                spoken = _stt(
+                    language="en-ZA",
+                    start_prompt="🎙 Voice note",
+                    stop_prompt="⏹ Stop",
+                    just_once=True,
+                    use_container_width=True,
+                    key=f"ctx-stt-{ss.ctx_seq}",
+                )
+            with hint_col:
+                st.caption(
+                    "Tap **Voice note** → speak (room, scope, dimensions). Stops on tap-stop or silence. "
+                    "Transcribed text appends to the context box."
+                )
+            if spoken:
+                glue = "\n" if ss.get("ctx_buffer") else ""
+                ss.ctx_buffer = (ss.get("ctx_buffer") or "") + glue + spoken.strip()
+                ss.ctx_seq += 1  # rotate widget keys so the textarea picks up new initial value
+                st.rerun()
+
+        extra_context = st.text_area(
+            "Optional context (room, scope, dimensions, what you want the AI to focus on)",
+            value=ss.get("ctx_buffer", ""),
+            placeholder="e.g. 'Bathroom 1 refit — left photo is existing, right photo is proposed'",
+            height=80,
+            key=f"unified-context-{ss.ctx_seq}",
+        )
+        ss.ctx_buffer = extra_context
+
+        # Clipboard paste — captures whatever's on the clipboard (screenshot, copied image, text)
+        if paste_image_button is not None:
+            paste_cols = st.columns([1, 4])
+            with paste_cols[0]:
+                paste_result = paste_image_button(
+                    label="Paste image",
+                    key=f"paste-img-{ss.ctx_seq}",
+                    text_color="#0A2540",
+                    background_color="#EAF1F8",
+                    hover_background_color="#D6DEE3",
+                    errors="ignore",
+                )
+            with paste_cols[1]:
+                st.caption(
+                    "Copy any image (screenshot, WhatsApp, browser) → click **Paste image** to add it as an input. "
+                    "Or paste text directly into the context box above."
+                )
+            if paste_result and getattr(paste_result, "image_data", None) is not None:
+                # Convert PIL Image → PNG bytes, queue alongside other inputs
+                import io as _io
+                buf = _io.BytesIO()
+                paste_result.image_data.save(buf, format="PNG")
+                pasted_bytes = buf.getvalue()
+                from datetime import datetime as _dt
+                stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
+                pasted_name = f"pasted-{stamp}.png"
+                # Stash into unified_inputs so it goes through the next Run
+                inputs_so_far = list(ss.get("unified_inputs") or [])
+                inputs_so_far.append((pasted_bytes, "image/png", pasted_name))
+                ss.unified_inputs = inputs_so_far
+                if pasted_name not in ss.uploads:
+                    ss.uploads[pasted_name] = {"bytes": pasted_bytes, "media_type": "image/png", "is_pdf": False}
+                ss.ctx_seq += 1
+                log("clipboard_paste_image", details={"name": pasted_name, "bytes": len(pasted_bytes)})
+                st.toast(f"Pasted image queued: {pasted_name}", icon="📋")
+                st.rerun()
+        run = st.button(
+            "Run extraction", icon=":material/play_arrow:", type="primary",
+            disabled=not uploads or ss.frozen_quote is not None,
+            use_container_width=True,
+        )
+
+        if run and uploads:
+            # Stash bytes on session state so we can re-call after a clarification answer.
+            stashed = []
+            video_frame_total = 0
+            for up in uploads:
+                is_pdf = (up.type == "application/pdf") or up.name.lower().endswith(".pdf")
+                is_video = is_video_filename(up.name) or (up.type or "").startswith("video/")
+                raw_bytes = up.getvalue()
+
+                if is_video and extract_video_keyframes is not None:
+                    suffix = "." + up.name.lower().rsplit(".", 1)[-1]
+                    with st.spinner(f"Sampling keyframes from {up.name}…"):
+                        frames = extract_video_keyframes(raw_bytes, n_frames=8, suffix=suffix)
+                    if not frames:
+                        st.warning(f"Couldn't read frames from {up.name} — install opencv-python-headless or check the format.")
+                        continue
+                    base = up.name.rsplit(".", 1)[0]
+                    for i, (png_bytes, mime, fname) in enumerate(frames):
+                        labelled_name = f"{base}__{fname}"
+                        stashed.append((png_bytes, mime, labelled_name))
+                        if labelled_name not in ss.uploads:
+                            ss.uploads[labelled_name] = {"bytes": png_bytes, "media_type": mime, "is_pdf": False}
+                    video_frame_total += len(frames)
+                    log("video_keyframes_extracted", details={"video": up.name, "frames": len(frames)})
+                    continue
+
+                stashed.append((raw_bytes, up.type or ("application/pdf" if is_pdf else "image/jpeg"), up.name))
+
+                # Thumbnail for source-files panel
+                if up.name not in ss.uploads:
+                    if is_pdf:
+                        try:
+                            pages = pdf_pages_to_pngs(raw_bytes, scale=1.5)
+                            ss.uploads[up.name] = {
+                                "bytes": pages[0][1] if pages else b"",
+                                "media_type": "image/png",
+                                "is_pdf": True,
+                                "pdf_page_count": len(pages),
+                            }
+                        except Exception:
+                            ss.uploads[up.name] = {"bytes": b"", "media_type": "application/pdf", "is_pdf": True, "pdf_page_count": 0}
+                    else:
+                        ss.uploads[up.name] = {"bytes": raw_bytes, "media_type": up.type or "image/jpeg", "is_pdf": False}
+
+            if video_frame_total:
+                st.toast(f"Extracted {video_frame_total} keyframe(s) from video", icon="🎬")
+
+            ss.unified_inputs = stashed
+            ss.unified_context = extra_context or ""
+            _run_unified_extraction()
+
+    # Close the decorative dashed-dropzone wrapper opened above
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+    # ----- Setup / Other import methods (now at the bottom — auxiliary) -----
+    st.markdown(
+        '<div class="qs-divider" style="margin-top:24px; margin-bottom:16px;"></div>'
+        '<div style="display:flex; align-items:baseline; gap:10px; margin: 6px 0 10px 2px;">'
+        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
+        'text-transform:uppercase; color:var(--ink-3);">QUOTE DETAILS &amp; OTHER IMPORT METHODS</span>'
+        '<span style="font-size:0.82rem; color:var(--ink-3);">— required to issue · open as needed</span>'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -1923,160 +2097,6 @@ with tab_quote:
                         "photos_used": used_photos,
                     })
                     _run_unified_extraction()
-
-    # ----- DOMINANT INPUT ZONE — the page's primary action -----
-    # Section header (Xero-style) makes the role of this card unambiguous
-    st.markdown(
-        '<div style="display:flex; align-items:baseline; gap:10px; margin: 10px 0 8px 2px;">'
-        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
-        'text-transform:uppercase; color:var(--brand);">STEP 1 · INPUTS</span>'
-        '<span style="font-size:0.85rem; color:var(--ink-3);">Drop drawings or photos — AI takes off the line items</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    with st.container(border=True):
-        st.markdown(
-            '<div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">'
-            f'{ic("upload", size=22, color="#4F46E5")}'
-            '<span style="font-size:1.15rem; font-weight:600; color:var(--ink); letter-spacing:-0.01em;">'
-            'Drop drawings, photos, PDFs or video</span></div>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "One file or many. The AI handles single take-offs, existing-vs-proposed diffs, and walk-through videos "
-            "(auto-sampled into ~8 keyframes). If it's stuck, it asks you instead of failing."
-        )
-        uploads = st.file_uploader(
-            " ",
-            type=["png", "jpg", "jpeg", "webp", "pdf", "mp4", "mov", "webm", "m4v"],
-            accept_multiple_files=True,
-            key="uploader",
-            label_visibility="collapsed",
-        )
-        # ----- Voice → text dictation (iOS Safari, Chrome, Edge supported) -----
-        if _stt is not None:
-            mic_col, hint_col = st.columns([1, 4])
-            with mic_col:
-                spoken = _stt(
-                    language="en-ZA",
-                    start_prompt="🎙 Voice note",
-                    stop_prompt="⏹ Stop",
-                    just_once=True,
-                    use_container_width=True,
-                    key=f"ctx-stt-{ss.ctx_seq}",
-                )
-            with hint_col:
-                st.caption(
-                    "Tap **Voice note** → speak (room, scope, dimensions). Stops on tap-stop or silence. "
-                    "Transcribed text appends to the context box."
-                )
-            if spoken:
-                glue = "\n" if ss.get("ctx_buffer") else ""
-                ss.ctx_buffer = (ss.get("ctx_buffer") or "") + glue + spoken.strip()
-                ss.ctx_seq += 1  # rotate widget keys so the textarea picks up new initial value
-                st.rerun()
-
-        extra_context = st.text_area(
-            "Optional context (room, scope, dimensions, what you want the AI to focus on)",
-            value=ss.get("ctx_buffer", ""),
-            placeholder="e.g. 'Bathroom 1 refit — left photo is existing, right photo is proposed'",
-            height=80,
-            key=f"unified-context-{ss.ctx_seq}",
-        )
-        ss.ctx_buffer = extra_context
-
-        # Clipboard paste — captures whatever's on the clipboard (screenshot, copied image, text)
-        if paste_image_button is not None:
-            paste_cols = st.columns([1, 4])
-            with paste_cols[0]:
-                paste_result = paste_image_button(
-                    label="Paste image",
-                    key=f"paste-img-{ss.ctx_seq}",
-                    text_color="#0A2540",
-                    background_color="#EAF1F8",
-                    hover_background_color="#D6DEE3",
-                    errors="ignore",
-                )
-            with paste_cols[1]:
-                st.caption(
-                    "Copy any image (screenshot, WhatsApp, browser) → click **Paste image** to add it as an input. "
-                    "Or paste text directly into the context box above."
-                )
-            if paste_result and getattr(paste_result, "image_data", None) is not None:
-                # Convert PIL Image → PNG bytes, queue alongside other inputs
-                import io as _io
-                buf = _io.BytesIO()
-                paste_result.image_data.save(buf, format="PNG")
-                pasted_bytes = buf.getvalue()
-                from datetime import datetime as _dt
-                stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
-                pasted_name = f"pasted-{stamp}.png"
-                # Stash into unified_inputs so it goes through the next Run
-                inputs_so_far = list(ss.get("unified_inputs") or [])
-                inputs_so_far.append((pasted_bytes, "image/png", pasted_name))
-                ss.unified_inputs = inputs_so_far
-                if pasted_name not in ss.uploads:
-                    ss.uploads[pasted_name] = {"bytes": pasted_bytes, "media_type": "image/png", "is_pdf": False}
-                ss.ctx_seq += 1
-                log("clipboard_paste_image", details={"name": pasted_name, "bytes": len(pasted_bytes)})
-                st.toast(f"Pasted image queued: {pasted_name}", icon="📋")
-                st.rerun()
-        run = st.button(
-            "Run extraction", icon=":material/play_arrow:", type="primary",
-            disabled=not uploads or ss.frozen_quote is not None,
-            use_container_width=True,
-        )
-
-        if run and uploads:
-            # Stash bytes on session state so we can re-call after a clarification answer.
-            stashed = []
-            video_frame_total = 0
-            for up in uploads:
-                is_pdf = (up.type == "application/pdf") or up.name.lower().endswith(".pdf")
-                is_video = is_video_filename(up.name) or (up.type or "").startswith("video/")
-                raw_bytes = up.getvalue()
-
-                if is_video and extract_video_keyframes is not None:
-                    suffix = "." + up.name.lower().rsplit(".", 1)[-1]
-                    with st.spinner(f"Sampling keyframes from {up.name}…"):
-                        frames = extract_video_keyframes(raw_bytes, n_frames=8, suffix=suffix)
-                    if not frames:
-                        st.warning(f"Couldn't read frames from {up.name} — install opencv-python-headless or check the format.")
-                        continue
-                    base = up.name.rsplit(".", 1)[0]
-                    for i, (png_bytes, mime, fname) in enumerate(frames):
-                        labelled_name = f"{base}__{fname}"
-                        stashed.append((png_bytes, mime, labelled_name))
-                        if labelled_name not in ss.uploads:
-                            ss.uploads[labelled_name] = {"bytes": png_bytes, "media_type": mime, "is_pdf": False}
-                    video_frame_total += len(frames)
-                    log("video_keyframes_extracted", details={"video": up.name, "frames": len(frames)})
-                    continue
-
-                stashed.append((raw_bytes, up.type or ("application/pdf" if is_pdf else "image/jpeg"), up.name))
-
-                # Thumbnail for source-files panel
-                if up.name not in ss.uploads:
-                    if is_pdf:
-                        try:
-                            pages = pdf_pages_to_pngs(raw_bytes, scale=1.5)
-                            ss.uploads[up.name] = {
-                                "bytes": pages[0][1] if pages else b"",
-                                "media_type": "image/png",
-                                "is_pdf": True,
-                                "pdf_page_count": len(pages),
-                            }
-                        except Exception:
-                            ss.uploads[up.name] = {"bytes": b"", "media_type": "application/pdf", "is_pdf": True, "pdf_page_count": 0}
-                    else:
-                        ss.uploads[up.name] = {"bytes": raw_bytes, "media_type": up.type or "image/jpeg", "is_pdf": False}
-
-            if video_frame_total:
-                st.toast(f"Extracted {video_frame_total} keyframe(s) from video", icon="🎬")
-
-            ss.unified_inputs = stashed
-            ss.unified_context = extra_context or ""
-            _run_unified_extraction()
 
 
 # Render the clarification card if the AI is asking for guidance
