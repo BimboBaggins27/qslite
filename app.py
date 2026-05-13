@@ -566,6 +566,26 @@ ss.setdefault("pending_items", [])  # items awaiting diff-confirm
 ss.setdefault("locked_zones", set())  # zones the user has locked from re-extraction
 ss.setdefault("history", [])  # versioning stack
 ss.setdefault("quote_header", QuoteHeader().model_dump())  # editable cover-page fields
+# Auto-fill vendor company fields from NDLOVU_DEFAULT (company_profile.load_profile())
+# so every new quote starts with Reg / VAT Reg / address / contact pre-populated.
+try:
+    _qh = ss.quote_header
+    if not (_qh.get("company_name") or "").strip():
+        import company_profile as _cp
+        _profile = _cp.load_profile()
+        _qh["company_name"] = _profile.get("company_name") or _qh.get("company_name") or ""
+        _qh["company_address"] = _profile.get("company_address") or _qh.get("company_address") or ""
+        _qh["company_vat_reg"] = _profile.get("company_vat_reg") or _qh.get("company_vat_reg") or ""
+        _qh["company_reg"] = _profile.get("company_reg") or _qh.get("company_reg") or ""
+        # Combine both phone + email lines into the "company_contact" single field
+        _phones = [_profile.get("company_phone_robert") or "", _profile.get("company_phone_tina") or ""]
+        _emails = [_profile.get("company_email_robert") or "", _profile.get("company_email_tina") or ""]
+        _contact_bits = [b for b in (_phones + _emails) if b.strip()]
+        if _contact_bits and not (_qh.get("company_contact") or "").strip():
+            _qh["company_contact"] = " | ".join(_contact_bits)
+        ss.quote_header = _qh
+except Exception:
+    pass
 ss.setdefault("key_input_seq", 0)  # increment to force a fresh API-key input widget
 ss.setdefault("ctx_seq", 0)  # increment to refresh the context textarea after STT injection
 ss.setdefault("ctx_buffer", "")  # buffer that backs the context textarea
