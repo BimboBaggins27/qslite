@@ -1,23 +1,21 @@
 """Auto-source SA market rates for extracted items that don't match the catalogue.
 
-When the rate matcher fails (returns no candidate), we ask Claude Haiku for the
-most affordable South African market rate that still meets a reasonable quality
-floor. The result is annotated so the user always sees that the rate was
-auto-sourced (and can override).
+When the rate matcher fails (returns no candidate), we ask the active LLM
+provider for the most affordable South African market rate that still meets
+a reasonable quality floor. The result is annotated so the user always sees
+that the rate was auto-sourced (and can override).
 
-Uses Claude Haiku for speed/cost. Tool-use ensures structured output.
+Routes through providers.call_with_tools() so it honours EXTRACTION_PROVIDER
+(gemini, groq, ollama, grok, anthropic). Falls back gracefully if no provider
+is configured.
 """
 from __future__ import annotations
 
-import os
 from typing import Optional
 
-import anthropic
-
+import providers
 from schema import ExtractedItem
 
-
-MODEL = "claude-haiku-4-5-20251001"
 
 SYSTEM_PROMPT = """You are an expert South African quantity surveyor. Given a single \
 construction line item that the user could not match against their internal rate \
@@ -56,11 +54,10 @@ PRICE_TOOL = {
 
 
 def auto_rate_item(item: ExtractedItem) -> Optional[dict]:
-    """Returns dict with keys rate_zar, confidence, reasoning, source_note — or None on failure."""
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
+    """Returns dict with keys rate_zar, confidence, reasoning, source_note — or None on failure.
 
-    client = anthropic.Anthropic()
+    Uses the active provider (EXTRACTION_PROVIDER env). Free if pointed at Gemini/Groq/Ollama.
+    """
     user_text = (
         "Suggest an affordable SA market unit rate for this single line item:\n\n"
         f"- Description: {item.description}\n"
@@ -72,30 +69,30 @@ def auto_rate_item(item: ExtractedItem) -> Optional[dict]:
         "affordable tier, 2026 South African market."
     )
     try:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=512,
+        result = providers.call_with_tools(
+            messages=[{"role": "user", "content": [{"type": "text", "text": user_text}]}],
             system=SYSTEM_PROMPT,
             tools=[PRICE_TOOL],
             tool_choice={"type": "tool", "name": "suggest_unit_rate"},
-            messages=[{"role": "user", "content": [{"type": "text", "text": user_text}]}],
+            kind="text",
+            max_tokens=512,
         )
     except Exception:
         return None
 
-    tool_use = next((b for b in response.content if b.type == "tool_use"), None)
-    if tool_use is None:
+    if result is None or not getattr(result, "input", None):
         return None
-    raw = tool_use.input
+    raw = result.input
     try:
         rate = float(raw["rate_zar"])
         if rate <= 0:
             return None
+        provider_name = providers.active_provider()
         return {
             "rate_zar": round(rate, 2),
             "confidence": float(raw.get("confidence", 0.5)),
             "reasoning": str(raw.get("reasoning", "")),
-            "source_note": str(raw.get("source_note", "auto-sourced via Claude (SA market knowledge, 2026)")),
+            "source_note": str(raw.get("source_note", f"auto-sourced via {provider_name} (SA market knowledge, 2026)")),
         }
     except (KeyError, TypeError, ValueError):
         return None
