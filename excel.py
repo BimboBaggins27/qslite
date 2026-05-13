@@ -264,6 +264,10 @@ def issued_quote_to_xlsx(quote: dict) -> bytes:
     ordered_zones = _zone_order(list(by_zone.keys()))
     show_zone_labels = not (len(by_zone) == 1 and "Default" in by_zone)
 
+    # Track the data-row range so the totals can SUM it via formulas
+    first_data_row: int | None = None
+    last_data_row: int | None = None
+
     for zone in ordered_zones:
         zlist = by_zone[zone]
         if not zlist:
@@ -276,7 +280,6 @@ def issued_quote_to_xlsx(quote: dict) -> bytes:
         for li in zlist:
             qty = float(li.get("quantity", 0))
             rate = float(li.get("rate_zar", 0))
-            amount = round(qty * rate, 2)
             _set(ws, row, 1, li.get("description") or "",
                  font=BODY, alignment=LEFT_C, border=BOX)
             _set(ws, row, 2, li.get("unit") or "",
@@ -285,23 +288,29 @@ def issued_quote_to_xlsx(quote: dict) -> bytes:
                  font=BODY, alignment=RIGHT, number_format=NUM_FMT, border=BOX)
             _set(ws, row, 4, rate,
                  font=BODY, alignment=RIGHT, number_format=NUM_FMT, border=BOX)
-            _set(ws, row, 5, amount,
+            # AMOUNT = formula so it recalculates when qty/rate are edited in Excel
+            _set(ws, row, 5, f"=C{row}*D{row}",
                  font=BODY, alignment=RIGHT, number_format=NUM_FMT, border=BOX)
+            if first_data_row is None:
+                first_data_row = row
+            last_data_row = row
             row += 1
 
     row += 1  # spacer before totals
 
     # ============================================================
-    # 8. TOTALS — banded grey, three rows when VAT is shown
+    # 8. TOTALS — banded grey, three rows when VAT is shown.
+    # All values are FORMULAS so editing qty/rate in Excel auto-recalculates.
     # ============================================================
-    vat_amount = round(total_ex * vat_pct / 100.0, 2)
-    total_inc = round(total_ex + vat_amount, 2)
+    if first_data_row is not None and last_data_row is not None:
+        total_ex_formula = f"=SUM(E{first_data_row}:E{last_data_row})"
+    else:
+        # Fallback: literal value if there were somehow no line items
+        total_ex_formula = total_ex
 
-    def _total_row(label: str, amt: float, *, with_top: bool = False, with_bottom: bool = False):
+    def _total_row(label: str, value, *, with_top: bool = False, with_bottom: bool = False):
+        """value may be a number or a string starting with '=' (formula)."""
         nonlocal row
-        # Cells A..D — label, merged, light-grey filled, bold, top/bottom rules as needed
-        b_top = TOP_RULE if with_top else None
-        b_bot = BOTTOM_RULE if with_bottom else None
         if with_top and with_bottom:
             full_border = Border(top=THIN, bottom=THIN)
         elif with_top:
@@ -313,17 +322,20 @@ def issued_quote_to_xlsx(quote: dict) -> bytes:
         _merge_set(ws, row, 1, 4, label, font=TOTAL_FONT,
                    alignment=Alignment(horizontal="left", vertical="center"),
                    fill=BAND_FILL, border=full_border)
-        _set(ws, row, 5, amt, font=TOTAL_FONT, alignment=RIGHT,
+        _set(ws, row, 5, value, font=TOTAL_FONT, alignment=RIGHT,
              number_format=NUM_FMT, fill=BAND_FILL, border=full_border)
         ws.row_dimensions[row].height = 18
+        this_row = row
         row += 1
+        return this_row
 
     if show_vat:
-        _total_row("TOTAL QUOTATION EXCLUDING VAT", total_ex, with_top=True)
-        _total_row(f"ADD {vat_pct:g}% VAT", vat_amount)
-        _total_row("TOTAL QUOTATION INCLUDING VAT", total_inc, with_bottom=True)
+        vat_factor = vat_pct / 100.0  # e.g. 0.15
+        tot_ex_row = _total_row("TOTAL QUOTATION EXCLUDING VAT", total_ex_formula, with_top=True)
+        vat_row = _total_row(f"ADD {vat_pct:g}% VAT", f"=E{tot_ex_row}*{vat_factor}")
+        _total_row("TOTAL QUOTATION INCLUDING VAT", f"=E{tot_ex_row}+E{vat_row}", with_bottom=True)
     else:
-        _total_row("TOTAL QUOTATION", total_ex, with_top=True, with_bottom=True)
+        _total_row("TOTAL QUOTATION", total_ex_formula, with_top=True, with_bottom=True)
 
     row += 1
 
