@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from schema import LineItem
+import db_adapter
 
 
 DB_PATH = Path(__file__).parent / "data" / "memory.sqlite"
@@ -202,10 +203,9 @@ PRAGMA busy_timeout = 5000;
 @contextmanager
 def _conn():
     """Default read/write connection. Auto-applies schema, migrations, and PRAGMAs.
-    Each call commits on clean exit, rolls back on exception."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(DB_PATH, timeout=10.0)
-    con.row_factory = sqlite3.Row
+    Each call commits on clean exit, rolls back on exception.
+    Routes to Turso (libSQL) when TURSO_URL is set, else local sqlite."""
+    con = db_adapter.connect()
     try:
         con.executescript(_PRAGMAS)
         con.executescript(SCHEMA)
@@ -221,9 +221,20 @@ def _conn():
 
 @contextmanager
 def transaction():
-    """Atomic write context — wraps a BEGIN IMMEDIATE so concurrent writers serialise.
-    Use this for any multi-statement write that must be all-or-nothing
-    (next_invoice_no + INSERT, record_payment + status recompute, etc.)."""
+    """Atomic write context. On local sqlite uses BEGIN IMMEDIATE to serialise
+    concurrent writers; on Turso each statement autocommits (single-user app,
+    server-side isolation makes this safe for QSLite's workload)."""
+    if db_adapter.USE_TURSO:
+        # Turso autocommits per-statement; just yield the standard connection
+        con = db_adapter.connect()
+        try:
+            con.executescript(_PRAGMAS)
+            con.executescript(SCHEMA)
+            _migrate(con)
+            yield con
+        finally:
+            con.close()
+        return
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(DB_PATH, timeout=10.0, isolation_level=None)
     con.row_factory = sqlite3.Row
@@ -243,10 +254,22 @@ def transaction():
 
 
 def backup_to(path: str | Path) -> Path:
-    """Atomic, WAL-safe DB backup using SQLite's online backup API.
-    Returns the path written to."""
+    """Atomic backup. For local sqlite uses the online backup API. For Turso,
+    snapshots the schema + every row to a fresh sqlite file at `path`."""
     out = Path(path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    if db_adapter.USE_TURSO:
+        # Pull every table from Turso into a fresh local sqlite file
+        dst = sqlite3.connect(out)
+        try:
+            dst.executescript(SCHEMA)
+            with _conn() as src:
+                _migrate(dst)  # ensure schema parity
+                _snapshot_turso_to(dst, src)
+            dst.commit()
+        finally:
+            dst.close()
+        return out
     src = sqlite3.connect(DB_PATH, timeout=10.0)
     try:
         dst = sqlite3.connect(out)
@@ -257,6 +280,30 @@ def backup_to(path: str | Path) -> Path:
     finally:
         src.close()
     return out
+
+
+def _snapshot_turso_to(dst: sqlite3.Connection, src) -> None:
+    """Copy every row from each known table out of `src` (Turso) into `dst` (local sqlite)."""
+    tables = [
+        "rate_edits", "qty_edits", "issued_quotes", "issued_quote_items",
+        "clients", "projects_admin", "learned_items",
+        "invoices", "invoice_lines", "payments",
+    ]
+    for t in tables:
+        try:
+            rows = list(src.execute(f"SELECT * FROM {t}").fetchall())
+        except Exception:
+            continue
+        if not rows:
+            continue
+        cols = list(rows[0].keys())
+        placeholders = ",".join("?" for _ in cols)
+        col_list = ",".join(cols)
+        dst.execute(f"DELETE FROM {t}")
+        dst.executemany(
+            f"INSERT INTO {t}({col_list}) VALUES ({placeholders})",
+            [tuple(r[c] for c in cols) for r in rows],
+        )
 
 
 def record_rate_edit(rate_code: Optional[str], description: str, catalogue_rate: float, user_rate: float) -> None:

@@ -1326,182 +1326,9 @@ with tab_quote:
         unsafe_allow_html=True,
     )
 
-    # ----- DOMINANT INPUT ZONE — page's primary action, immediately under header
-    st.markdown(
-        '<div style="display:flex; align-items:center; justify-content:space-between; '
-        'gap:10px; margin: 14px 0 10px 2px;">'
-        '<div style="display:flex; align-items:baseline; gap:10px;">'
-        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
-        'text-transform:uppercase; color:var(--brand);">START HERE</span>'
-        '<span style="font-size:0.92rem; color:var(--ink-2); font-weight:500;">'
-        'Drop your drawings — AI takes off the line items</span>'
-        '</div></div>',
-        unsafe_allow_html=True,
-    )
-    # Clean dropzone card — flat, hairline border (Linear/Stripe pattern). No gradients.
-    with st.container(border=True):
-        st.markdown(
-            '<div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">'
-            '<div style="width:32px; height:32px; border-radius:6px; '
-            'background: var(--brand-soft); display:flex; align-items:center; '
-            'justify-content:center;">'
-            f'{ic("upload", size=18, color="#5E6AD2")}'
-            '</div>'
-            '<div>'
-            '<div style="font-size:1rem; font-weight:600; color:var(--ink); letter-spacing:-0.01em;">'
-            'Drop drawings, photos, PDFs or video</div>'
-            '<div style="font-size:0.82rem; color:var(--ink-3); margin-top:1px;">'
-            'One file or many. PDFs auto-paginate. Videos are sampled into ~8 keyframes.'
-            '</div>'
-            '</div></div>',
-            unsafe_allow_html=True,
-        )
-        uploads = st.file_uploader(
-            " ",
-            type=["png", "jpg", "jpeg", "webp", "pdf", "mp4", "mov", "webm", "m4v"],
-            accept_multiple_files=True,
-            key="uploader",
-            label_visibility="collapsed",
-        )
-        # ----- Voice → text dictation (iOS Safari, Chrome, Edge supported) -----
-        if _stt is not None:
-            mic_col, hint_col = st.columns([1, 4])
-            with mic_col:
-                spoken = _stt(
-                    language="en-ZA",
-                    start_prompt="🎙 Voice note",
-                    stop_prompt="⏹ Stop",
-                    just_once=True,
-                    use_container_width=True,
-                    key=f"ctx-stt-{ss.ctx_seq}",
-                )
-            with hint_col:
-                st.caption(
-                    "Tap **Voice note** → speak (room, scope, dimensions). Stops on tap-stop or silence. "
-                    "Transcribed text appends to the context box."
-                )
-            if spoken:
-                glue = "\n" if ss.get("ctx_buffer") else ""
-                ss.ctx_buffer = (ss.get("ctx_buffer") or "") + glue + spoken.strip()
-                ss.ctx_seq += 1  # rotate widget keys so the textarea picks up new initial value
-                st.rerun()
-
-        extra_context = st.text_area(
-            "Optional context (room, scope, dimensions, what you want the AI to focus on)",
-            value=ss.get("ctx_buffer", ""),
-            placeholder="e.g. 'Bathroom 1 refit — left photo is existing, right photo is proposed'",
-            height=80,
-            key=f"unified-context-{ss.ctx_seq}",
-        )
-        ss.ctx_buffer = extra_context
-
-        # Clipboard paste — captures whatever's on the clipboard (screenshot, copied image, text)
-        if paste_image_button is not None:
-            paste_cols = st.columns([1, 4])
-            with paste_cols[0]:
-                paste_result = paste_image_button(
-                    label="Paste image",
-                    key=f"paste-img-{ss.ctx_seq}",
-                    text_color="#0A2540",
-                    background_color="#EAF1F8",
-                    hover_background_color="#D6DEE3",
-                    errors="ignore",
-                )
-            with paste_cols[1]:
-                st.caption(
-                    "Copy any image (screenshot, WhatsApp, browser) → click **Paste image** to add it as an input. "
-                    "Or paste text directly into the context box above."
-                )
-            if paste_result and getattr(paste_result, "image_data", None) is not None:
-                # Convert PIL Image → PNG bytes, queue alongside other inputs
-                import io as _io
-                buf = _io.BytesIO()
-                paste_result.image_data.save(buf, format="PNG")
-                pasted_bytes = buf.getvalue()
-                from datetime import datetime as _dt
-                stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
-                pasted_name = f"pasted-{stamp}.png"
-                # Stash into unified_inputs so it goes through the next Run
-                inputs_so_far = list(ss.get("unified_inputs") or [])
-                inputs_so_far.append((pasted_bytes, "image/png", pasted_name))
-                ss.unified_inputs = inputs_so_far
-                if pasted_name not in ss.uploads:
-                    ss.uploads[pasted_name] = {"bytes": pasted_bytes, "media_type": "image/png", "is_pdf": False}
-                ss.ctx_seq += 1
-                log("clipboard_paste_image", details={"name": pasted_name, "bytes": len(pasted_bytes)})
-                st.toast(f"Pasted image queued: {pasted_name}", icon="📋")
-                st.rerun()
-        run = st.button(
-            "Run extraction", icon=":material/play_arrow:", type="primary",
-            disabled=not uploads or ss.frozen_quote is not None,
-            use_container_width=True,
-        )
-
-        if run and uploads:
-            # Stash bytes on session state so we can re-call after a clarification answer.
-            stashed = []
-            video_frame_total = 0
-            for up in uploads:
-                is_pdf = (up.type == "application/pdf") or up.name.lower().endswith(".pdf")
-                is_video = is_video_filename(up.name) or (up.type or "").startswith("video/")
-                raw_bytes = up.getvalue()
-
-                if is_video and extract_video_keyframes is not None:
-                    suffix = "." + up.name.lower().rsplit(".", 1)[-1]
-                    with st.spinner(f"Sampling keyframes from {up.name}…"):
-                        frames = extract_video_keyframes(raw_bytes, n_frames=8, suffix=suffix)
-                    if not frames:
-                        st.warning(f"Couldn't read frames from {up.name} — install opencv-python-headless or check the format.")
-                        continue
-                    base = up.name.rsplit(".", 1)[0]
-                    for i, (png_bytes, mime, fname) in enumerate(frames):
-                        labelled_name = f"{base}__{fname}"
-                        stashed.append((png_bytes, mime, labelled_name))
-                        if labelled_name not in ss.uploads:
-                            ss.uploads[labelled_name] = {"bytes": png_bytes, "media_type": mime, "is_pdf": False}
-                    video_frame_total += len(frames)
-                    log("video_keyframes_extracted", details={"video": up.name, "frames": len(frames)})
-                    continue
-
-                stashed.append((raw_bytes, up.type or ("application/pdf" if is_pdf else "image/jpeg"), up.name))
-
-                # Thumbnail for source-files panel
-                if up.name not in ss.uploads:
-                    if is_pdf:
-                        try:
-                            pages = pdf_pages_to_pngs(raw_bytes, scale=1.5)
-                            ss.uploads[up.name] = {
-                                "bytes": pages[0][1] if pages else b"",
-                                "media_type": "image/png",
-                                "is_pdf": True,
-                                "pdf_page_count": len(pages),
-                            }
-                        except Exception:
-                            ss.uploads[up.name] = {"bytes": b"", "media_type": "application/pdf", "is_pdf": True, "pdf_page_count": 0}
-                    else:
-                        ss.uploads[up.name] = {"bytes": raw_bytes, "media_type": up.type or "image/jpeg", "is_pdf": False}
-
-            if video_frame_total:
-                st.toast(f"Extracted {video_frame_total} keyframe(s) from video", icon="🎬")
-
-            ss.unified_inputs = stashed
-            ss.unified_context = extra_context or ""
-            _run_unified_extraction()
-
-    # ----- Setup / Other import methods (now at the bottom — auxiliary) -----
-    st.markdown(
-        '<div class="qs-divider" style="margin-top:24px; margin-bottom:16px;"></div>'
-        '<div style="display:flex; align-items:baseline; gap:10px; margin: 6px 0 10px 2px;">'
-        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
-        'text-transform:uppercase; color:var(--ink-3);">QUOTE DETAILS &amp; OTHER IMPORT METHODS</span>'
-        '<span style="font-size:0.82rem; color:var(--ink-3);">— required to issue · open as needed</span>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
     # ----- Quote header (editable cover-page fields) -----
     with st.expander("Quote header (editable — company, client, quote no, terms)",
-                       expanded=False, icon=":material/edit_note:"):
+                       expanded=True, icon=":material/edit_note:"):
         h = ss.quote_header
 
         # ===== REQUIRED: Client + Project, dropdown + inline-add =====
@@ -1673,87 +1500,8 @@ with tab_quote:
 
         ss.quote_header = h
 
-    # ----- Inbox folder watcher — drop files in E:\NdlovuQS\inbox\ and click Process -----
-    inbox_files = _list_inbox_files()
-    # Collapsed by default; expand if there are files waiting
-    inbox_label = f"Inbox ({len(inbox_files)} file(s) ready)" if inbox_files else "Inbox"
-    with st.expander(inbox_label, expanded=bool(inbox_files), icon=":material/inbox:"):
-        cols_h = st.columns([3, 1])
-        with cols_h[0]:
-            st.subheader("📥 Inbox")
-            st.caption(
-                f"Drop photos/PDFs/surveys into `{_inbox_dir()}` from anywhere — "
-                "Explorer, drag-drop, OneDrive sync, WhatsApp save-to-folder. Click **Process inbox** and the AI takes it from there."
-            )
-        with cols_h[1]:
-            try:
-                import os
-                if st.button("Open inbox folder", use_container_width=True, disabled=not _inbox_dir().exists()):
-                    os.startfile(str(_inbox_dir()))
-            except Exception:
-                pass
 
-        if not inbox_files:
-            st.info(f"Inbox empty. Drop files in `{_inbox_dir()}` and refresh.")
-        else:
-            st.markdown(f"**{len(inbox_files)} file(s) ready to process:**")
-            for p in inbox_files:
-                size_kb = p.stat().st_size / 1024
-                size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
-                st.markdown(f"- `{p.name}` ({size_str})")
-
-            cols_b = st.columns([1, 1, 2])
-            move_after = cols_b[0].checkbox("Move processed → `inbox/processed/`", value=True, key="inbox-move")
-            run_inbox = cols_b[1].button(
-                "Process inbox", icon=":material/rocket_launch:", type="primary", use_container_width=True,
-                disabled=ss.frozen_quote is not None,
-            )
-            if run_inbox:
-                stashed: list[tuple[bytes, str, str]] = []
-                for p in inbox_files:
-                    raw = p.read_bytes()
-                    suffix = p.suffix.lower()
-                    media = "application/pdf" if suffix == ".pdf" else "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "application/octet-stream"
-                    if suffix == ".xlsx":
-                        # parse as a foreman survey
-                        try:
-                            data = survey_template.parse_survey_xlsx(raw)
-                            ss.unified_context = ((ss.get("unified_context") or "") + "\n\n" + survey_template.survey_to_extra_context(data)).strip()
-                            # pre-fill header
-                            h = ss.quote_header
-                            for src, dst in [
-                                ("client", "client_name"), ("site", "client_address"),
-                                ("job_ref", "quote_no"), ("date", "quote_date"), ("scope", "re_subject"),
-                            ]:
-                                v = getattr(data.header, src, "")
-                                if v and not h.get(dst):
-                                    h[dst] = v
-                            ss.quote_header = h
-                            log("inbox_xlsx_parsed", details={"file": p.name, "items": len(data.items)})
-                            continue
-                        except Exception as e:
-                            st.warning(f"Couldn't parse {p.name} as survey: {e}")
-                            continue
-                    stashed.append((raw, media, p.name))
-                    if p.name not in ss.uploads:
-                        ss.uploads[p.name] = {"bytes": raw if suffix != ".pdf" else b"",
-                                              "media_type": media, "is_pdf": suffix == ".pdf"}
-
-                if stashed or ss.get("unified_context"):
-                    ss.unified_inputs = (ss.get("unified_inputs") or []) + stashed
-                    log("inbox_processed", details={"count": len(inbox_files)})
-                    if move_after:
-                        proc_dir = _inbox_dir() / "processed"
-                        proc_dir.mkdir(exist_ok=True)
-                        from datetime import datetime as _dt
-                        stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
-                        for p in inbox_files:
-                            try:
-                                p.rename(proc_dir / f"{stamp}_{p.name}")
-                            except Exception:
-                                pass
-                    _run_unified_extraction()
-
+    # ----- STEP 2: SITE SURVEY -----
     # ----- Site Survey (foreman template upload) -----
     with st.expander("Site Survey — download blank template / import filled-in survey",
                        expanded=False, icon=":material/content_paste:"):
@@ -1894,6 +1642,251 @@ with tab_quote:
                 ss.clarification = None
                 log("clarification_cancelled")
                 st.rerun()
+
+
+    # ----- STEP 3: DRAWINGS / PHOTOS / VIDEOS -----
+    # ----- DOMINANT INPUT ZONE — page's primary action, immediately under header
+    st.markdown(
+        '<div style="display:flex; align-items:center; justify-content:space-between; '
+        'gap:10px; margin: 14px 0 10px 2px;">'
+        '<div style="display:flex; align-items:baseline; gap:10px;">'
+        '<span style="font-size:0.72rem; font-weight:600; letter-spacing:0.08em; '
+        'text-transform:uppercase; color:var(--brand);">START HERE</span>'
+        '<span style="font-size:0.92rem; color:var(--ink-2); font-weight:500;">'
+        'Drop your drawings — AI takes off the line items</span>'
+        '</div></div>',
+        unsafe_allow_html=True,
+    )
+    # Clean dropzone card — flat, hairline border (Linear/Stripe pattern). No gradients.
+    with st.container(border=True):
+        st.markdown(
+            '<div style="display:flex; align-items:center; gap:12px; margin-bottom:6px;">'
+            '<div style="width:32px; height:32px; border-radius:6px; '
+            'background: var(--brand-soft); display:flex; align-items:center; '
+            'justify-content:center;">'
+            f'{ic("upload", size=18, color="#5E6AD2")}'
+            '</div>'
+            '<div>'
+            '<div style="font-size:1rem; font-weight:600; color:var(--ink); letter-spacing:-0.01em;">'
+            'Drop drawings, photos, PDFs or video</div>'
+            '<div style="font-size:0.82rem; color:var(--ink-3); margin-top:1px;">'
+            'One file or many. PDFs auto-paginate. Videos are sampled into ~8 keyframes.'
+            '</div>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        uploads = st.file_uploader(
+            " ",
+            type=["png", "jpg", "jpeg", "webp", "pdf", "mp4", "mov", "webm", "m4v"],
+            accept_multiple_files=True,
+            key="uploader",
+            label_visibility="collapsed",
+        )
+        # ----- Voice → text dictation (iOS Safari, Chrome, Edge supported) -----
+        if _stt is not None:
+            mic_col, hint_col = st.columns([1, 4])
+            with mic_col:
+                spoken = _stt(
+                    language="en-ZA",
+                    start_prompt="🎙 Voice note",
+                    stop_prompt="⏹ Stop",
+                    just_once=True,
+                    use_container_width=True,
+                    key=f"ctx-stt-{ss.ctx_seq}",
+                )
+            with hint_col:
+                st.caption(
+                    "Tap **Voice note** → speak (room, scope, dimensions). Stops on tap-stop or silence. "
+                    "Transcribed text appends to the context box."
+                )
+            if spoken:
+                glue = "\n" if ss.get("ctx_buffer") else ""
+                ss.ctx_buffer = (ss.get("ctx_buffer") or "") + glue + spoken.strip()
+                ss.ctx_seq += 1  # rotate widget keys so the textarea picks up new initial value
+                st.rerun()
+
+        extra_context = st.text_area(
+            "Optional context (room, scope, dimensions, what you want the AI to focus on)",
+            value=ss.get("ctx_buffer", ""),
+            placeholder="e.g. 'Bathroom 1 refit — left photo is existing, right photo is proposed'",
+            height=80,
+            key=f"unified-context-{ss.ctx_seq}",
+        )
+        ss.ctx_buffer = extra_context
+
+        # Clipboard paste — captures whatever's on the clipboard (screenshot, copied image, text)
+        if paste_image_button is not None:
+            paste_cols = st.columns([1, 4])
+            with paste_cols[0]:
+                paste_result = paste_image_button(
+                    label="Paste image",
+                    key=f"paste-img-{ss.ctx_seq}",
+                    text_color="#0A2540",
+                    background_color="#EAF1F8",
+                    hover_background_color="#D6DEE3",
+                    errors="ignore",
+                )
+            with paste_cols[1]:
+                st.caption(
+                    "Copy any image (screenshot, WhatsApp, browser) → click **Paste image** to add it as an input. "
+                    "Or paste text directly into the context box above."
+                )
+            if paste_result and getattr(paste_result, "image_data", None) is not None:
+                # Convert PIL Image → PNG bytes, queue alongside other inputs
+                import io as _io
+                buf = _io.BytesIO()
+                paste_result.image_data.save(buf, format="PNG")
+                pasted_bytes = buf.getvalue()
+                from datetime import datetime as _dt
+                stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
+                pasted_name = f"pasted-{stamp}.png"
+                # Stash into unified_inputs so it goes through the next Run
+                inputs_so_far = list(ss.get("unified_inputs") or [])
+                inputs_so_far.append((pasted_bytes, "image/png", pasted_name))
+                ss.unified_inputs = inputs_so_far
+                if pasted_name not in ss.uploads:
+                    ss.uploads[pasted_name] = {"bytes": pasted_bytes, "media_type": "image/png", "is_pdf": False}
+                ss.ctx_seq += 1
+                log("clipboard_paste_image", details={"name": pasted_name, "bytes": len(pasted_bytes)})
+                st.toast(f"Pasted image queued: {pasted_name}", icon="📋")
+                st.rerun()
+        run = st.button(
+            "Run extraction", icon=":material/play_arrow:", type="primary",
+            disabled=not uploads or ss.frozen_quote is not None,
+            use_container_width=True,
+        )
+
+        if run and uploads:
+            # Stash bytes on session state so we can re-call after a clarification answer.
+            stashed = []
+            video_frame_total = 0
+            for up in uploads:
+                is_pdf = (up.type == "application/pdf") or up.name.lower().endswith(".pdf")
+                is_video = is_video_filename(up.name) or (up.type or "").startswith("video/")
+                raw_bytes = up.getvalue()
+
+                if is_video and extract_video_keyframes is not None:
+                    suffix = "." + up.name.lower().rsplit(".", 1)[-1]
+                    with st.spinner(f"Sampling keyframes from {up.name}…"):
+                        frames = extract_video_keyframes(raw_bytes, n_frames=8, suffix=suffix)
+                    if not frames:
+                        st.warning(f"Couldn't read frames from {up.name} — install opencv-python-headless or check the format.")
+                        continue
+                    base = up.name.rsplit(".", 1)[0]
+                    for i, (png_bytes, mime, fname) in enumerate(frames):
+                        labelled_name = f"{base}__{fname}"
+                        stashed.append((png_bytes, mime, labelled_name))
+                        if labelled_name not in ss.uploads:
+                            ss.uploads[labelled_name] = {"bytes": png_bytes, "media_type": mime, "is_pdf": False}
+                    video_frame_total += len(frames)
+                    log("video_keyframes_extracted", details={"video": up.name, "frames": len(frames)})
+                    continue
+
+                stashed.append((raw_bytes, up.type or ("application/pdf" if is_pdf else "image/jpeg"), up.name))
+
+                # Thumbnail for source-files panel
+                if up.name not in ss.uploads:
+                    if is_pdf:
+                        try:
+                            pages = pdf_pages_to_pngs(raw_bytes, scale=1.5)
+                            ss.uploads[up.name] = {
+                                "bytes": pages[0][1] if pages else b"",
+                                "media_type": "image/png",
+                                "is_pdf": True,
+                                "pdf_page_count": len(pages),
+                            }
+                        except Exception:
+                            ss.uploads[up.name] = {"bytes": b"", "media_type": "application/pdf", "is_pdf": True, "pdf_page_count": 0}
+                    else:
+                        ss.uploads[up.name] = {"bytes": raw_bytes, "media_type": up.type or "image/jpeg", "is_pdf": False}
+
+            if video_frame_total:
+                st.toast(f"Extracted {video_frame_total} keyframe(s) from video", icon="🎬")
+
+            ss.unified_inputs = stashed
+            ss.unified_context = extra_context or ""
+            _run_unified_extraction()
+
+    # ----- Inbox folder watcher — drop files in E:\NdlovuQS\inbox\ and click Process -----
+    inbox_files = _list_inbox_files()
+    # Collapsed by default; expand if there are files waiting
+    inbox_label = f"Inbox ({len(inbox_files)} file(s) ready)" if inbox_files else "Inbox"
+    with st.expander(inbox_label, expanded=bool(inbox_files), icon=":material/inbox:"):
+        cols_h = st.columns([3, 1])
+        with cols_h[0]:
+            st.subheader("📥 Inbox")
+            st.caption(
+                f"Drop photos/PDFs/surveys into `{_inbox_dir()}` from anywhere — "
+                "Explorer, drag-drop, OneDrive sync, WhatsApp save-to-folder. Click **Process inbox** and the AI takes it from there."
+            )
+        with cols_h[1]:
+            try:
+                import os
+                if st.button("Open inbox folder", use_container_width=True, disabled=not _inbox_dir().exists()):
+                    os.startfile(str(_inbox_dir()))
+            except Exception:
+                pass
+
+        if not inbox_files:
+            st.info(f"Inbox empty. Drop files in `{_inbox_dir()}` and refresh.")
+        else:
+            st.markdown(f"**{len(inbox_files)} file(s) ready to process:**")
+            for p in inbox_files:
+                size_kb = p.stat().st_size / 1024
+                size_str = f"{size_kb:.0f} KB" if size_kb < 1024 else f"{size_kb/1024:.1f} MB"
+                st.markdown(f"- `{p.name}` ({size_str})")
+
+            cols_b = st.columns([1, 1, 2])
+            move_after = cols_b[0].checkbox("Move processed → `inbox/processed/`", value=True, key="inbox-move")
+            run_inbox = cols_b[1].button(
+                "Process inbox", icon=":material/rocket_launch:", type="primary", use_container_width=True,
+                disabled=ss.frozen_quote is not None,
+            )
+            if run_inbox:
+                stashed: list[tuple[bytes, str, str]] = []
+                for p in inbox_files:
+                    raw = p.read_bytes()
+                    suffix = p.suffix.lower()
+                    media = "application/pdf" if suffix == ".pdf" else "image/jpeg" if suffix in (".jpg", ".jpeg") else "image/png" if suffix == ".png" else "image/webp" if suffix == ".webp" else "application/octet-stream"
+                    if suffix == ".xlsx":
+                        # parse as a foreman survey
+                        try:
+                            data = survey_template.parse_survey_xlsx(raw)
+                            ss.unified_context = ((ss.get("unified_context") or "") + "\n\n" + survey_template.survey_to_extra_context(data)).strip()
+                            # pre-fill header
+                            h = ss.quote_header
+                            for src, dst in [
+                                ("client", "client_name"), ("site", "client_address"),
+                                ("job_ref", "quote_no"), ("date", "quote_date"), ("scope", "re_subject"),
+                            ]:
+                                v = getattr(data.header, src, "")
+                                if v and not h.get(dst):
+                                    h[dst] = v
+                            ss.quote_header = h
+                            log("inbox_xlsx_parsed", details={"file": p.name, "items": len(data.items)})
+                            continue
+                        except Exception as e:
+                            st.warning(f"Couldn't parse {p.name} as survey: {e}")
+                            continue
+                    stashed.append((raw, media, p.name))
+                    if p.name not in ss.uploads:
+                        ss.uploads[p.name] = {"bytes": raw if suffix != ".pdf" else b"",
+                                              "media_type": media, "is_pdf": suffix == ".pdf"}
+
+                if stashed or ss.get("unified_context"):
+                    ss.unified_inputs = (ss.get("unified_inputs") or []) + stashed
+                    log("inbox_processed", details={"count": len(inbox_files)})
+                    if move_after:
+                        proc_dir = _inbox_dir() / "processed"
+                        proc_dir.mkdir(exist_ok=True)
+                        from datetime import datetime as _dt
+                        stamp = _dt.utcnow().strftime("%Y%m%d-%H%M%S")
+                        for p in inbox_files:
+                            try:
+                                p.rename(proc_dir / f"{stamp}_{p.name}")
+                            except Exception:
+                                pass
+                    _run_unified_extraction()
 
     # ----- Pending review (diff-confirm) -----
     if ss.pending_items:

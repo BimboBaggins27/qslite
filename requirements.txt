@@ -12,3 +12,4 @@ streamlit-paste-button>=0.1.2
 cryptography>=42.0
 opencv-python-headless>=4.8
 openai>=1.40
+libsql>=0.1.11
