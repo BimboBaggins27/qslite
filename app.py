@@ -357,22 +357,51 @@ h3 { font-size: 1rem !important; line-height: 1.4; }
     border-color: var(--line-strong) !important;
     min-height: 40px;
 }
-[data-baseweb="popover"] {
-    background: var(--bg-card) !important;
-    border-radius: var(--r-lg) !important;
-    box-shadow: var(--shadow-md) !important;
-    border: 1px solid var(--line);
+/* Dropdown popover — hardened with explicit hex (CSS vars don't always reach
+   portaled popovers; rendered at document.body level outside app scope). */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
+[data-baseweb="popover"] [data-baseweb="menu"],
+[data-baseweb="popover"] ul,
+[data-baseweb="popover"] [role="listbox"] {
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    border-radius: 10px !important;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.06) !important;
+    border: 1px solid #E5E7EB !important;
+    opacity: 1 !important;
+    backdrop-filter: none !important;
 }
-[data-baseweb="popover"] [role="option"] {
-    font-size: 13px !important; padding: 8px 12px !important;
-    color: var(--ink) !important; border-radius: var(--r-sm);
+[data-baseweb="popover"] [role="option"],
+[data-baseweb="popover"] li {
+    background: #FFFFFF !important;
+    background-color: #FFFFFF !important;
+    color: #0F172A !important;
+    font-size: 13px !important;
+    padding: 10px 12px !important;
+    border-radius: 6px !important;
+    opacity: 1 !important;
+    text-shadow: none !important;
 }
-[data-baseweb="popover"] [role="option"]:hover {
-    background: var(--brand-soft) !important; color: var(--brand) !important;
+[data-baseweb="popover"] [role="option"]:hover,
+[data-baseweb="popover"] li:hover {
+    background: #EEF1FF !important;
+    background-color: #EEF1FF !important;
+    color: #4F5BD8 !important;
 }
-[data-baseweb="popover"] [role="option"][aria-selected="true"] {
-    background: var(--brand-soft) !important; color: var(--brand) !important;
+[data-baseweb="popover"] [role="option"][aria-selected="true"],
+[data-baseweb="popover"] li[aria-selected="true"] {
+    background: #EEF1FF !important;
+    background-color: #EEF1FF !important;
+    color: #4F5BD8 !important;
     font-weight: 600 !important;
+}
+/* Inner spans/divs inside options sometimes carry their own faded color */
+[data-baseweb="popover"] [role="option"] *,
+[data-baseweb="popover"] li * {
+    color: inherit !important;
+    opacity: 1 !important;
 }
 [data-baseweb="tag"] {
     background: var(--brand-soft) !important; color: var(--brand) !important;
@@ -2017,6 +2046,45 @@ with tab_quote:
             locked = zone in ss.locked_zones
             zone_label = f"{'🔒 ' if locked else ''}{zone}  —  R {zone_total:,.2f}  ({len(zone_items)} items)"
             with st.expander(zone_label, expanded=True):
+                # ----- Zone rename -----
+                rename_key = f"rename-zone-toggle-{zone}"
+                if ss.get(rename_key):
+                    rn_cols = st.columns([4, 1, 1])
+                    with rn_cols[0]:
+                        new_zone_name = st.text_input(
+                            "Rename zone",
+                            value=zone,
+                            key=f"rename-zone-input-{zone}",
+                            label_visibility="collapsed",
+                            placeholder="New zone name",
+                        )
+                    with rn_cols[1]:
+                        if st.button("Save", icon=":material/save:", key=f"rename-zone-save-{zone}", type="primary", use_container_width=True):
+                            new_zone_name = (new_zone_name or "").strip()
+                            if new_zone_name and new_zone_name != zone:
+                                take_snapshot(f"rename zone '{zone}' → '{new_zone_name}'")
+                                renamed_count = 0
+                                for _li in ss.line_items:
+                                    if _li.zone == zone:
+                                        _li.zone = new_zone_name
+                                        renamed_count += 1
+                                if zone in ss.locked_zones:
+                                    ss.locked_zones.discard(zone)
+                                    ss.locked_zones.add(new_zone_name)
+                                log("rename_zone", details={"from": zone, "to": new_zone_name, "items": renamed_count})
+                                st.toast(f"Renamed '{zone}' → '{new_zone_name}' ({renamed_count} items)", icon="✏️")
+                            ss[rename_key] = False
+                            st.rerun()
+                    with rn_cols[2]:
+                        if st.button("Cancel", key=f"rename-zone-cancel-{zone}", use_container_width=True):
+                            ss[rename_key] = False
+                            st.rerun()
+                else:
+                    rn_cols = st.columns([5, 1])
+                    with rn_cols[1]:
+                        if st.button("✏️ Rename", key=f"rename-zone-{zone}", use_container_width=True, help="Rename this zone — all items in it will move under the new name"):
+                            ss[rename_key] = True
+                            st.rerun()
                 if zone_pending:
                     zb = st.columns([4, 1])
                     zb[0].caption(f"{len(zone_pending)} item(s) in this zone need confirmation.")
