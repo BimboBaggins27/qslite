@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import uuid
@@ -2524,12 +2525,23 @@ with tab_quote:
                             use_container_width=True,
                         )
                 with d2:
-                    st.download_button(
-                        "Download Excel", icon=":material/grid_on:",
-                        data=xlsx_bytes,
-                        file_name=f"{base_name}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True,
+                    # iPad Safari mishandles Streamlit's blob-URL download_button
+                    # for xlsx — saves the rendered page as .html. Use a data-URI
+                    # anchor with the `download` attribute so iOS/Safari triggers
+                    # a real file download.
+                    _xlsx_b64 = base64.b64encode(xlsx_bytes).decode("ascii")
+                    _xlsx_mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    st.markdown(
+                        f'<a href="data:{_xlsx_mime};base64,{_xlsx_b64}" '
+                        f'download="{base_name}.xlsx" '
+                        'style="display:flex;align-items:center;justify-content:center;'
+                        'gap:0.4rem;width:100%;padding:0.5rem 1rem;'
+                        'background-color:rgb(240,242,246);color:rgb(38,39,48);'
+                        'border:1px solid rgba(49,51,63,0.2);border-radius:0.5rem;'
+                        'text-decoration:none;font-size:0.875rem;font-weight:400;'
+                        'box-sizing:border-box;font-family:\'Source Sans Pro\',sans-serif;">'
+                        '<span style="font-size:1rem;">📊</span> Download Excel</a>',
+                        unsafe_allow_html=True,
                     )
 
                 if pdf_bytes:
